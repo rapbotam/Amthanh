@@ -95,7 +95,7 @@
         <button id="replayBtnDirect" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="setB()">Đánh dấu điểm cuối</button>
         
-        <button id="voiceSearchBtnDirect" class="voice-search-btn" onclick="startVoiceSearch()">Tìm kiếm bài hát bằng giọng nói</button>
+        <button id="voiceSearchBtnDirect" class="voice-search-btn" onclick="startVoiceSearch()">Nhấn để nói</button>
         
         <button id="speedBtnDirect" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectDirect" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
@@ -118,7 +118,7 @@
         <button id="replayBtnManual" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="openInputBox('end')">Nhập điểm cuối</button>
         
-        <button id="voiceSearchBtnManual" class="voice-search-btn" onclick="startVoiceSearch()">Tìm kiếm bài hát bằng giọng nói</button>
+        <button id="voiceSearchBtnManual" class="voice-search-btn" onclick="startVoiceSearch()">Nhấn để nói</button>
         
         <button id="speedBtnManual" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectManual" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
@@ -214,7 +214,6 @@
         }
     }
 
-    // HÀM CHUYỂN ĐỔI CHỮ TIẾNG VIỆT CÓ DẤU VÀ KÝ TỰ ĐẶC BIỆT THÀNH CHỮ THƯỜNG KHÔNG DẤU ĐỂ SO SÁNH CHUẨN XÁC NHẤT
     function cleanTextForSearch(str) {
         if (!str) return "";
         return str.toLowerCase()
@@ -248,7 +247,6 @@
         recognition.onstart = () => {
             btnDirect.classList.add('listening');
             btnManual.classList.add('listening');
-            speak("Mời bạn nói tên bài hát muốn tìm");
         };
 
         recognition.onerror = (event) => {
@@ -1345,6 +1343,7 @@
         }
     }
 
+    // Các hàm mã hóa & cắt nhạc chuông giữ nguyên cấu trúc logic hoạt động ổn định của bạn
     function showQualityMenu() {
         document.getElementById('fastCutBtnDirect').style.display = "none";
         document.getElementById('fastCutBtnManual').style.display = "none";
