@@ -209,7 +209,6 @@
             btnDirect.style.display = "inline-block";
             btnManual.style.display = "inline-block";
         } else {
-            // Vẫn giữ hiển thị nếu có ít nhất 1 tệp nhằm mục đích nhận diện lệnh tua hoặc check thông tin
             if (filePlaylist.length > 0) {
                 btnDirect.style.display = "inline-block";
                 btnManual.style.display = "inline-block";
@@ -277,14 +276,29 @@
             }
 
             // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
-            if (lowerResult.includes("tua")) {
-                let numbers = lowerResult.match(/\d+/);
+            if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai")) {
+                let amount = 0;
+                
+                // Chuẩn hóa một số chữ số phổ biến dạng nói sang chữ số để xử lý chính xác
+                let chuẩnHóaResult = lowerResult
+                    .replace(/mười lăm/g, "15")
+                    .replace(/ba mươi/g, "30")
+                    .replace(/bốn mươi lăm/g, "45")
+                    .replace(/sáu mươi/g, "60")
+                    .replace(/một/g, "1")
+                    .replace(/hai/g, "2")
+                    .replace(/ba/g, "3")
+                    .replace(/bốn/g, "4")
+                    .replace(/năm/g, "5");
+
+                let numbers = chuẩnHóaResult.match(/\d+/);
                 if (numbers) {
-                    let amount = parseInt(numbers[0]);
-                    if (lowerResult.includes("phút")) {
+                    amount = parseInt(numbers[0]);
+                    if (chuẩnHóaResult.includes("phút")) {
                         amount = amount * 60;
                     }
-                    if (lowerResult.includes("lùi") || lowerResult.includes("sau") || lowerResult.includes("ngược")) {
+                    
+                    if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
                         activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
                         speakTuaInfo("Tua lùi", activePlayer.currentTime);
                     } else {
@@ -292,7 +306,15 @@
                         speakTuaInfo("Tua tới", activePlayer.currentTime);
                     }
                 } else {
-                    speak("Không rõ mốc thời gian muốn tua.");
+                    // Cứu cánh thông minh: Nếu nói "tua đi/tua lại" không kèm số, lấy giá trị của chế độ tua hiện tại
+                    amount = skipModes[currentModeIndex].value;
+                    if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
+                        activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
+                        speakTuaInfo("Tua lùi", activePlayer.currentTime);
+                    } else {
+                        activePlayer.currentTime = Math.min(activePlayer.duration || activePlayer.currentTime, activePlayer.currentTime + amount);
+                        speakTuaInfo("Tua tới", activePlayer.currentTime);
+                    }
                 }
                 return;
             }
@@ -1306,8 +1328,8 @@
             if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
             toggleLoop(false);
             speak("Đã bật chế độ nghe lại"); 
-                }
-            }
+        }
+    }
 
     function toggleLoop(canSpeak = false) {
         if (loopInterval) {
