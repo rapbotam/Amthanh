@@ -209,8 +209,14 @@
             btnDirect.style.display = "inline-block";
             btnManual.style.display = "inline-block";
         } else {
-            btnDirect.style.display = "none";
-            btnManual.style.display = "none";
+            // Vẫn giữ hiển thị nếu có ít nhất 1 tệp nhằm mục đích nhận diện lệnh tua hoặc check thông tin
+            if (filePlaylist.length > 0) {
+                btnDirect.style.display = "inline-block";
+                btnManual.style.display = "inline-block";
+            } else {
+                btnDirect.style.display = "none";
+                btnManual.style.display = "none";
+            }
         }
     }
 
@@ -262,8 +268,37 @@
 
         recognition.onresult = (event) => {
             const voiceResult = event.results[0][0].transcript;
+            const lowerResult = voiceResult.toLowerCase();
+
+            // Xử lý lệnh kiểm tra thông tin nâng cao (Phản hồi lập tức)
+            if (lowerResult.includes("thông tin") || lowerResult.includes("check") || lowerResult.includes("kiểm tra")) {
+                readSongInfo();
+                return;
+            }
+
+            // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
+            if (lowerResult.includes("tua")) {
+                let numbers = lowerResult.match(/\d+/);
+                if (numbers) {
+                    let amount = parseInt(numbers[0]);
+                    if (lowerResult.includes("phút")) {
+                        amount = amount * 60;
+                    }
+                    if (lowerResult.includes("lùi") || lowerResult.includes("sau") || lowerResult.includes("ngược")) {
+                        activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
+                        speakTuaInfo("Tua lùi", activePlayer.currentTime);
+                    } else {
+                        activePlayer.currentTime = Math.min(activePlayer.duration || activePlayer.currentTime, activePlayer.currentTime + amount);
+                        speakTuaInfo("Tua tới", activePlayer.currentTime);
+                    }
+                } else {
+                    speak("Không rõ mốc thời gian muốn tua.");
+                }
+                return;
+            }
+
+            // Trả về logic tìm kiếm theo tên tệp nếu không trùng lệnh chức năng
             const cleanVoiceQuery = cleanTextForSearch(voiceResult);
-            
             if (!cleanVoiceQuery) {
                 speak("Không nghe rõ từ khóa, vui lòng thử lại.");
                 return;
@@ -1343,7 +1378,6 @@
         }
     }
 
-    // Các hàm mã hóa & cắt nhạc chuông giữ nguyên cấu trúc logic hoạt động ổn định của bạn
     function showQualityMenu() {
         document.getElementById('fastCutBtnDirect').style.display = "none";
         document.getElementById('fastCutBtnManual').style.display = "none";
