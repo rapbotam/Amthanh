@@ -15,12 +15,13 @@
 
         #controls-wrapper { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e1e1e; padding: 15px; box-sizing: border-box; display: none; }
         .row { margin: 5px 0; display: flex; justify-content: center; align-items: center; gap: 5px; flex-wrap: wrap; }
-        button, select, .search-input { background: #333; color: white; border: 1px solid #555; padding: 12px 18px; border-radius: 4px; font-size: 14px; }
+        button, select { background: #333; color: white; border: 1px solid #555; padding: 12px 18px; border-radius: 4px; font-size: 14px; }
         button:hover, select:hover { background: #555; }
-        
-        /* Tối ưu riêng cho ô nhập tìm kiếm văn bản và mặc định ẩn đi */
-        .search-input { width: 180px; box-sizing: border-box; background: #222; text-align: left; display: none; }
-        .search-input:focus { border-color: #00ff99; background: #2a2a2a; outline: none; }
+
+        /* Style tối ưu riêng cho nút tìm kiếm giọng nói */
+        .voice-search-btn { background: #cc3300; border-color: #ff5533; font-weight: bold; display: none; }
+        .voice-search-btn:hover { background: #ff3300; }
+        .voice-search-btn.listening { background: #ffcc00 !important; color: #000 !important; border-color: #ffff00 !important; }
 
         .replay-btn-class { background: #0066cc; display: none; }
         .replay-btn-class.active-loop { background: #cc7a00 !important; border-color: #ff9900 !important; color: #fff !important; }
@@ -94,7 +95,7 @@
         <button id="replayBtnDirect" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="setB()">Đánh dấu điểm cuối</button>
         
-        <input type="text" id="textSearchInputDirect" class="search-input" placeholder="Nhập tên để tìm kiếm..." onkeydown="handleSearchKeyDown(event)">
+        <button id="voiceSearchBtnDirect" class="voice-search-btn" onclick="startVoiceSearch()">Tìm kiếm bài hát bằng giọng nói</button>
         
         <button id="speedBtnDirect" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectDirect" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
@@ -117,7 +118,7 @@
         <button id="replayBtnManual" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="openInputBox('end')">Nhập điểm cuối</button>
         
-        <input type="text" id="textSearchInputManual" class="search-input" placeholder="Nhập tên để tìm kiếm..." onkeydown="handleSearchKeyDown(event)">
+        <button id="voiceSearchBtnManual" class="voice-search-btn" onclick="startVoiceSearch()">Tìm kiếm bài hát bằng giọng nói</button>
         
         <button id="speedBtnManual" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectManual" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
@@ -201,69 +202,106 @@
 
     let fadeInterval = null;
 
-    function updateSearchInputVisibility() {
-        const inputDirect = document.getElementById('textSearchInputDirect');
-        const inputManual = document.getElementById('textSearchInputManual');
+    function updateVoiceSearchVisibility() {
+        const btnDirect = document.getElementById('voiceSearchBtnDirect');
+        const btnManual = document.getElementById('voiceSearchBtnManual');
         if (filePlaylist.length >= 2) {
-            inputDirect.style.display = "inline-block";
-            inputManual.style.display = "inline-block";
+            btnDirect.style.display = "inline-block";
+            btnManual.style.display = "inline-block";
         } else {
-            inputDirect.style.display = "none";
-            inputManual.style.display = "none";
+            btnDirect.style.display = "none";
+            btnManual.style.display = "none";
         }
     }
 
-    function handleSearchKeyDown(event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            const queryText = event.target.value.trim().toLowerCase();
-            processSearchTextQuery(queryText);
-        }
+    // HÀM CHUYỂN ĐỔI CHỮ TIẾNG VIỆT CÓ DẤU VÀ KÝ TỰ ĐẶC BIỆT THÀNH CHỮ THƯỜNG KHÔNG DẤU ĐỂ SO SÁNH CHUẨN XÁC NHẤT
+    function cleanTextForSearch(str) {
+        if (!str) return "";
+        return str.toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/đ/g, "d")
+            .replace(/[^a-z0-9 ]/g, "")
+            .trim();
     }
 
-    function processSearchTextQuery(queryText) {
+    function startVoiceSearch() {
         if (filePlaylist.length === 0) {
             speak("Danh sách phát hiện đang trống, vui lòng chọn tệp trước.");
-            document.getElementById('textSearchInputDirect').value = "";
-            document.getElementById('textSearchInputManual').value = "";
             return;
         }
-        if (!queryText) {
-            speak("Vui lòng nhập từ khóa để tìm kiếm.");
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            speak("Trình duyệt của bạn không hỗ trợ tính năng tìm kiếm bằng giọng nói.");
             return;
         }
-        
-        let foundIndex = -1;
-        for (let i = 0; i < filePlaylist.length; i++) {
-            let cleanName = getCleanFileName(filePlaylist[i].name).toLowerCase();
-            if (cleanName.includes(queryText)) {
-                foundIndex = i;
-                break;
+
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'vi-VN';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        const btnDirect = document.getElementById('voiceSearchBtnDirect');
+        const btnManual = document.getElementById('voiceSearchBtnManual');
+
+        recognition.onstart = () => {
+            btnDirect.classList.add('listening');
+            btnManual.classList.add('listening');
+            speak("Mời bạn nói tên bài hát muốn tìm");
+        };
+
+        recognition.onerror = (event) => {
+            btnDirect.classList.remove('listening');
+            btnManual.classList.remove('listening');
+            speak("Lỗi nhận diện giọng nói, vui lòng thử lại.");
+        };
+
+        recognition.onend = () => {
+            btnDirect.classList.remove('listening');
+            btnManual.classList.remove('listening');
+        };
+
+        recognition.onresult = (event) => {
+            const voiceResult = event.results[0][0].transcript;
+            const cleanVoiceQuery = cleanTextForSearch(voiceResult);
+            
+            if (!cleanVoiceQuery) {
+                speak("Không nghe rõ từ khóa, vui lòng thử lại.");
+                return;
             }
-        }
 
-        if (foundIndex !== -1) {
-            fadeOut(() => {
-                if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-                resetAllLoopButtons(false);
-                activePlayer.pause();
-                activePlayer.src = "";
-                videoPlayer.src = "";
-                timeA = null; timeB = null;
-                document.getElementById('replayBtnDirect').style.display = "none";
-                document.getElementById('replayBtnManual').style.display = "none";
-                resetToDefaultSpeedView();
+            let foundIndex = -1;
+            for (let i = 0; i < filePlaylist.length; i++) {
+                let cleanFileName = cleanTextForSearch(getCleanFileName(filePlaylist[i].name));
+                if (cleanFileName.includes(cleanVoiceQuery)) {
+                    foundIndex = i;
+                    break;
+                }
+            }
 
-                currentFileIndex = foundIndex;
-                playCurrentPlaylistItem();
-                document.activeElement.blur(); 
-            });
-        } else {
-            speak("Không tìm thấy tệp bạn đã yêu cầu, vui lòng thử lại.");
-        }
+            if (foundIndex !== -1) {
+                fadeOut(() => {
+                    if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
+                    resetAllLoopButtons(false);
+                    activePlayer.pause();
+                    activePlayer.src = "";
+                    videoPlayer.src = "";
+                    timeA = null; timeB = null;
+                    document.getElementById('replayBtnDirect').style.display = "none";
+                    document.getElementById('replayBtnManual').style.display = "none";
+                    resetToDefaultSpeedView();
 
-        document.getElementById('textSearchInputDirect').value = "";
-        document.getElementById('textSearchInputManual').value = "";
+                    currentFileIndex = foundIndex;
+                    playCurrentPlaylistItem();
+                    document.activeElement.blur(); 
+                });
+            } else {
+                speak("Xin lỗi. Không tìm thấy tệp bạn đã yêu cầu, vui lòng thử lại.");
+            }
+        };
+
+        recognition.start();
     }
 
     function fadeOut(callback) {
@@ -555,7 +593,7 @@
         configureSkipModes(type);
         playCurrentPlaylistItem();
         
-        updateSearchInputVisibility();
+        updateVoiceSearchVisibility();
 
         document.getElementById('main-selector-row').style.display = "flex";
         controls.style.display = "block";
@@ -1204,7 +1242,7 @@
         timeA = null;
         timeB = null;
         
-        updateSearchInputVisibility();
+        updateVoiceSearchVisibility();
         checkRange();
     }
 
@@ -1465,7 +1503,6 @@
             const recordedBuffer = audioCtx.createBuffer(2, totalSamples, sampleRate);
             let recordedSamplesCount = 0;
             
-            // KẾT NỐI LUỒNG ÂM THANH CHUẨN XÁC, KHÔNG NGẮT GIỮA CHỪNG
             source.connect(processor);
             processor.connect(audioCtx.destination);
             source.connect(audioCtx.destination); 
@@ -1492,7 +1529,6 @@
                 }
                 
                 if (recordedSamplesCount >= totalSamples) {
-                    // KHI HOÀN THÀNH, CHỈ NGẮT PHẦN GHI ÂM, GIỮ LẠI TRẠNG THÁI PHÁT CỦA VIDEO
                     source.disconnect(processor);
                     processor.disconnect();
                     
