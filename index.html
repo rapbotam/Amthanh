@@ -18,6 +18,7 @@
         button, select { background: #333; color: white; border: 1px solid #555; padding: 12px 18px; border-radius: 4px; font-size: 14px; }
         button:hover, select:hover { background: #555; }
 
+        /* Style tối ưu riêng cho nút tìm kiếm giọng nói */
         .voice-search-btn { background: #cc3300; border-color: #ff5533; font-weight: bold; display: none; }
         .voice-search-btn:hover { background: #ff3300; }
         .voice-search-btn.listening { background: #ffcc00 !important; color: #000 !important; border-color: #ffff00 !important; }
@@ -45,40 +46,18 @@
         .speed-trigger-btn { display: inline-block; background: #6600cc; border-color: #7f00ff; font-weight: bold; }
         .speed-trigger-btn:hover { background: #7f00ff; }
         
-        .engine-trigger-btn { display: inline-block; background: #cc6600; border-color: #ff8000; font-weight: bold; }
-        .engine-trigger-btn:hover { background: #ff8000; }
-
         .actual-speed-select { display: none; background: #6600cc; color: white; border: 1px solid #7f00ff; font-weight: bold; }
-        .actual-engine-select { display: none; background: #cc6600; color: white; border: 1px solid #ff8000; font-weight: bold; }
 
         .playlist-trigger-btn { background: #006644; border-color: #009966; font-weight: bold; }
         .playlist-trigger-btn:hover { background: #009966; }
         .actual-playlist-select { display: none; background: #006644; color: white; border: 1px solid #009966; font-weight: bold; }
         
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
-
-        /* Giao diện bảo mật API Key */
-        #api-auth-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(15,15,15,0.98); z-index:9999; display:flex; flex-direction:column; justify-content:center; align-items:center; padding:20px; box-sizing:border-box; }
-        .auth-card { background:#222; border: 2px solid #00ff99; padding:30px; border-radius:8px; max-width:400px; width:100%; box-sizing:border-box; }
-        .auth-card h2 { color:#00ff99; margin-top:0; }
-        .auth-card input { width:100%; padding:12px; margin:15px 0; background:#111; color:#fff; border:1px solid #555; border-radius:4px; box-sizing:border-box; text-align:center; font-size:16px; }
-        .auth-card button { background:#00ff99; color:#000; border:none; padding:12px 25px; font-weight:bold; cursor:pointer; width:100%; font-size:16px; border-radius:4px; }
-        .auth-card button:hover { background:#00cc77; }
-        #view-key-btn { background:#444; color:#fff; border:1px solid #666; margin-top:10px; }
     </style>
 </head>
 <body>
 
 <div id="srAlertContainer" class="sr-only" aria-live="assertive"></div>
-
-<div id="api-auth-overlay">
-    <div class="auth-card" id="authCardContent">
-        <h2>CẤU HÌNH GEMINI API</h2>
-        <p id="authPromptText">Vui lòng điền API Key cá nhân để tiếp tục sử dụng giọng đọc AI.</p>
-        <input type="password" id="apiInputText" placeholder="Dán Gemini API Key vào đây..." autocomplete="off">
-        <button onclick="saveApiKey()">Xác nhận Key</button>
-    </div>
-</div>
 
 <div id="main-selector-row" class="file-selector-row">
     <button class="file-btn" onclick="triggerInput('audio')">Chọn bài hát</button>
@@ -99,7 +78,6 @@
         <button id="forwardBtn" onclick="forward()">Tua đi 15 giây</button>
         <button id="skipToggleBtn" onclick="toggleSkipMode()">Chuyển đổi giao diện tua</button>
         <button id="infoBtn" onclick="readSongInfo()">Xem thông tin bài hát</button>
-        <button id="viewKeyBtnDirect" id="view-key-btn" onclick="startViewKeyProcess()">Xem mã API Key</button>
         
         <button id="oldestFileBtn" onclick="handleOldestFileClick()">Nghe lại bài hát cũ nhất</button>
 
@@ -117,15 +95,9 @@
         <button id="replayBtnDirect" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="setB()">Đánh dấu điểm cuối</button>
         
-        <button id="voiceSearchBtnDirect" class="voice-search-btn" onclick="handleVoiceSearchClick()">Nhấn để nói</button>
+        <button id="voiceSearchBtnDirect" class="voice-search-btn" onclick="startVoiceSearch()">Nhấn để nói</button>
         
-        <button id="speedBtnDirect" class="speed-trigger-btn" onclick="showSpeedMenu('direct')">Chọn tốc độ giọng đọc</button>
-        
-        <button id="engineBtnDirect" class="engine-trigger-btn" onclick="showVoicesMenu('direct')">Chọn công cụ đọc</button>
-        <select id="engineSelectDirect" class="actual-engine-select" onchange="handleHiddenEngineChange(this)">
-            <option value="" disabled selected hidden>Chọn giọng đọc Gemini AI</option>
-        </select>
-
+        <button id="speedBtnDirect" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectDirect" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
             <option value="" disabled selected hidden>Chọn tốc độ giọng đọc</option>
             <option value="1.0">Chậm</option>
@@ -146,15 +118,9 @@
         <button id="replayBtnManual" class="replay-btn-class" onclick="toggleLoop(true)">Nghe lại thời gian đã được đánh dấu: Tắt</button>
         <button onclick="openInputBox('end')">Nhập điểm cuối</button>
         
-        <button id="voiceSearchBtnManual" class="voice-search-btn" onclick="handleVoiceSearchClick()">Nhấn để nói</button>
+        <button id="voiceSearchBtnManual" class="voice-search-btn" onclick="startVoiceSearch()">Nhấn để nói</button>
         
-        <button id="speedBtnManual" class="speed-trigger-btn" onclick="showSpeedMenu('manual')">Chọn tốc độ giọng đọc</button>
-        
-        <button id="engineBtnManual" class="engine-trigger-btn" onclick="showVoicesMenu('manual')">Chọn công cụ đọc</button>
-        <select id="engineSelectManual" class="actual-engine-select" onchange="handleHiddenEngineChange(this)">
-            <option value="" disabled selected hidden>Chọn giọng đọc Gemini AI</option>
-        </select>
-
+        <button id="speedBtnManual" class="speed-trigger-btn" onclick="showSpeedMenu()">Chọn tốc độ giọng đọc</button>
         <select id="speedSelectManual" class="actual-speed-select" onchange="handleHiddenSpeedChange(this)">
             <option value="" disabled selected hidden>Chọn tốc độ giọng đọc</option>
             <option value="1.0">Chậm</option>
@@ -213,16 +179,6 @@
     
     let selectedRate = 1.0;  
     let selectedPitch = 1.1; 
-    
-    // Cấu hình danh sách các giọng đọc nâng cao của Gemini
-    const geminiVoices = [
-        { uri: "Kore", name: "Giọng nam Kore (Trầm ấm)" },
-        { uri: "Puck", name: "Giọng nam Puck (Vui vẻ)" },
-        { uri: "Fenrir", name: "Giọng nam Fenrir (Mạnh mẽ)" },
-        { uri: "Aoede", name: "Giọng nữ Aoede (Nhẹ nhàng)" },
-        { uri: "Zephyr", name: "Giọng nữ Zephyr (Thời sự)" }
-    ];
-    let selectedVoiceURI = "Kore"; 
 
     let filePlaylist = [];
     let currentFileIndex = 0;
@@ -245,130 +201,25 @@
     let lastClickTime = 0;
 
     let fadeInterval = null;
-    let currentGeminiAudio = null;
 
-    let recognitionInstance = null;
-    let isListening = false;
-    let currentSecurityCode = ""; 
-
-    // QUẢN LÝ BẢO MẬT API KEY (Xóa ngay lập tức khi F5)
-    function saveApiKey() {
-        const keyInput = document.getElementById('apiInputText').value.trim();
-        if(!keyInput) {
-            alert("Vui lòng không để trống API Key!");
-            return;
-        }
-        sessionStorage.setItem('GEMINI_SECURE_KEY', keyInput);
-        document.getElementById('api-auth-overlay').style.display = "none";
-        setTimeout(() => { speak("Xác thực hệ thống thành công. Sẵn sàng hoạt động."); }, 300);
-    }
-
-    function startViewKeyProcess() {
-        currentSecurityCode = Math.floor(1000 + Math.random() * 9000).toString();
-        
-        const card = document.getElementById('authCardContent');
-        card.innerHTML = `
-            <h2>XÁC MINH BẢO MẬT</h2>
-            <p style="color:#ffcc00; font-size:18px; font-weight:bold;">Mã bảo mật thực tế: ${currentSecurityCode}</p>
-            <input type="text" id="securityCodeInput" placeholder="Nhập dãy số trên vào đây..." autocomplete="off">
-            <button onclick="verifySecurityCodeAndShowKey()">Xác thực mã</button>
-            <button id="view-key-btn" onclick="closeSecureView()">Hủy bỏ</button>
-        `;
-        document.getElementById('api-auth-overlay').style.display = "flex";
-        
-        // Đọc mã bảo mật lên ngay lập tức cho bộ đọc tiếp cận
-        setTimeout(() => { speak(`Mã bảo mật ngẫu nhiên là ${currentSecurityCode.split('').join(' ')}`); }, 200);
-    }
-
-    function verifySecurityCodeAndShowKey() {
-        const userInput = document.getElementById('securityCodeInput').value.trim();
-        if(userInput !== currentSecurityCode) {
-            speak("Mã xác thực không trùng khớp.");
-            alert("Sai mã số bảo mật!");
-            closeSecureView();
-            return;
-        }
-        
-        const realKey = sessionStorage.getItem('GEMINI_SECURE_KEY') || "Chưa có cấu hình key";
-        const card = document.getElementById('authCardContent');
-        card.innerHTML = `
-            <h2>API KEY CỦA BẠN</h2>
-            <input type="text" value="${realKey}" readonly onclick="this.select();">
-            <p style="font-size:12px; color:#aaa;">Bấm vào ô trên để sao chép dữ liệu.</p>
-            <button onclick="closeSecureView()">Đóng lại</button>
-        `;
-    }
-
-    function closeSecureView() {
-        document.getElementById('api-auth-overlay').style.display = "none";
-        // Khôi phục lại cấu trúc form ban đầu phòng trường hợp cần thiết
-        const card = document.getElementById('authCardContent');
-        card.innerHTML = `
-            <h2>CẤU HÌNH GEMINI API</h2>
-            <p id="authPromptText">Vui lòng điền API Key cá nhân để tiếp tục sử dụng giọng đọc AI.</p>
-            <input type="password" id="apiInputText" placeholder="Dán Gemini API Key vào đây..." autocomplete="off">
-            <button onclick="saveApiKey()">Xác nhận Key</button>
-        `;
-    }
-
-    // GỌI API GIỌNG ĐỌC CLOUD GEMINI
-    async function speak(text) {
-        if (isSpeechMuted) return;
-        
-        const secureKey = sessionStorage.getItem('GEMINI_SECURE_KEY');
-        if (!secureKey) {
-            document.getElementById('api-auth-overlay').style.display = "flex";
-            return;
-        }
-
-        // Dừng âm thanh Gemini cũ đang phát (nếu có)
-        if (currentGeminiAudio) {
-            currentGeminiAudio.pause();
-            currentGeminiAudio = null;
-        }
-
-        try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${secureKey}`;
-            const response = await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: text }] }],
-                    generationConfig: {
-                        responseModalities: ["AUDIO"],
-                        speechConfig: {
-                            voiceConfig: {
-                                prebuiltVoiceConfig: { voiceName: selectedVoiceURI }
-                            }
-                        }
-                    }
-                })
-            });
-
-            const data = await response.json();
-            if (data.candidates && data.candidates[0].content.parts[0].inlineData) {
-                const audioBase64 = data.candidates[0].content.parts[0].inlineData.data;
-                const audioUrl = `data:audio/mp3;base64,${audioBase64}`;
-                
-                currentGeminiAudio = new Audio(audioUrl);
-                currentGeminiAudio.play();
-            } else {
-                console.error("Lỗi cấu trúc phản hồi API Gemini");
-            }
-        } catch (error) {
-            console.error("Lỗi kết nối API Cloud Gemini:", error);
-        }
-    }
+    // Biến toàn cục quản lý đối tượng SpeechRecognition để điều khiển từ xa
+    let globalRecognition = null;
+    let isVoiceListening = false;
 
     function updateVoiceSearchVisibility() {
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
         const btnManual = document.getElementById('voiceSearchBtnManual');
-        if (filePlaylist.length > 0) {
+        if (filePlaylist.length >= 2) {
             btnDirect.style.display = "inline-block";
             btnManual.style.display = "inline-block";
         } else {
-            btnDirect.style.display = "none";
-            btnManual.style.display = "none";
+            if (filePlaylist.length > 0) {
+                btnDirect.style.display = "inline-block";
+                btnManual.style.display = "inline-block";
+            } else {
+                btnDirect.style.display = "none";
+                btnManual.style.display = "none";
+            }
         }
     }
 
@@ -382,17 +233,18 @@
             .trim();
     }
 
-    function handleVoiceSearchClick() {
-        if (isListening && recognitionInstance) {
-            recognitionInstance.stop();
-        } else {
-            startVoiceSearch();
-        }
-    }
-
     function startVoiceSearch() {
         if (filePlaylist.length === 0) {
             speak("Danh sách phát hiện đang trống, vui lòng chọn tệp trước.");
+            return;
+        }
+
+        const btnDirect = document.getElementById('voiceSearchBtnDirect');
+        const btnManual = document.getElementById('voiceSearchBtnManual');
+
+        // Bổ sung logic tăng tốc: Nếu đang nghe, người dùng ấn nút lần nữa để tìm kiếm ngay lập tức
+        if (isVoiceListening && globalRecognition) {
+            globalRecognition.stop(); // Dừng ghi âm ngay lập tức để kích hoạt sự kiện onresult
             return;
         }
 
@@ -402,24 +254,22 @@
             return;
         }
 
-        recognitionInstance = new SpeechRecognition();
-        recognitionInstance.lang = 'vi-VN';
-        recognitionInstance.interimResults = false;
-        recognitionInstance.maxAlternatives = 1;
+        const recognition = new SpeechRecognition();
+        globalRecognition = recognition;
+        recognition.lang = 'vi-VN';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
 
-        const btnDirect = document.getElementById('voiceSearchBtnDirect');
-        const btnManual = document.getElementById('voiceSearchBtnManual');
-
-        recognitionInstance.onstart = () => {
-            isListening = true;
+        recognition.onstart = () => {
+            isVoiceListening = true;
             btnDirect.classList.add('listening');
             btnManual.classList.add('listening');
-            btnDirect.innerText = "Nói xong ấn đây để tìm ngay";
-            btnManual.innerText = "Nói xong ấn đây để tìm ngay";
+            btnDirect.innerText = "Tìm ngay";
+            btnManual.innerText = "Tìm ngay";
         };
 
-        recognitionInstance.onerror = (event) => {
-            isListening = false;
+        recognition.onerror = (event) => {
+            isVoiceListening = false;
             btnDirect.classList.remove('listening');
             btnManual.classList.remove('listening');
             btnDirect.innerText = "Nhấn để nói";
@@ -427,25 +277,29 @@
             speak("Lỗi nhận diện giọng nói, vui lòng thử lại.");
         };
 
-        recognitionInstance.onend = () => {
-            isListening = false;
+        recognition.onend = () => {
+            isVoiceListening = false;
             btnDirect.classList.remove('listening');
             btnManual.classList.remove('listening');
             btnDirect.innerText = "Nhấn để nói";
             btnManual.innerText = "Nhấn để nói";
         };
 
-        recognitionInstance.onresult = (event) => {
+        recognition.onresult = (event) => {
             const voiceResult = event.results[0][0].transcript;
             const lowerResult = voiceResult.toLowerCase();
 
+            // Xử lý lệnh kiểm tra thông tin nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("thông tin") || lowerResult.includes("check") || lowerResult.includes("kiểm tra")) {
                 readSongInfo();
                 return;
             }
 
+            // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai")) {
                 let amount = 0;
+                
+                // Chuẩn hóa một số chữ số phổ biến dạng nói sang chữ số để xử lý chính xác
                 let chuẩnHóaResult = lowerResult
                     .replace(/mười lăm/g, "15")
                     .replace(/ba mươi/g, "30")
@@ -472,6 +326,7 @@
                         speakTuaInfo("Tua tới", activePlayer.currentTime);
                     }
                 } else {
+                    // Cứu cánh thông minh: Nếu nói "tua đi/tua lại" không kèm số, lấy giá trị của chế độ tua hiện tại
                     amount = skipModes[currentModeIndex].value;
                     if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
                         activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
@@ -484,6 +339,7 @@
                 return;
             }
 
+            // Trả về logic tìm kiếm theo tên tệp nếu không trùng lệnh chức năng
             const cleanVoiceQuery = cleanTextForSearch(voiceResult);
             if (!cleanVoiceQuery) {
                 speak("Không nghe rõ từ khóa, vui lòng thử lại.");
@@ -520,121 +376,7 @@
             }
         };
 
-        recognitionInstance.start();
-    }
-
-    function showSpeedMenu(viewMode) {
-        document.getElementById('speedBtnDirect').style.display = "none";
-        document.getElementById('speedBtnManual').style.display = "none";
-
-        const sDirect = document.getElementById('speedSelectDirect');
-        const sManual = document.getElementById('speedSelectManual');
-
-        sDirect.innerHTML = '<option value="" disabled selected hidden>Chọn tốc độ giọng đọc</option><option value="1.0">Chậm</option><option value="100.0">Tối đa</option>';
-        sManual.innerHTML = '<option value="" disabled selected hidden>Chọn tốc độ giọng đọc</option><option value="1.0">Chậm</option><option value="100.0">Tối đa</option>';
-
-        sDirect.style.display = "inline-block";
-        sManual.style.display = "inline-block";
-        speak("Vui lòng chọn tốc độ giọng đọc");
-
-        let targetMenu = (viewMode === 'manual') ? sManual : sDirect;
-        openDropdownList(targetMenu);
-    }
-
-    // THAY ĐỔI: MENU GEMINI PHỤ TRÁCH HIỂN THỊ CÁC GIỌNG CLOUD AI
-    function showVoicesMenu(viewMode) {
-        document.getElementById('engineBtnDirect').style.display = "none";
-        document.getElementById('engineBtnManual').style.display = "none";
-
-        const eDirect = document.getElementById('engineSelectDirect');
-        const eManual = document.getElementById('engineSelectManual');
-
-        const menuOptionsHtml = ['<option value="" disabled selected hidden>Chọn giọng đọc Gemini AI</option>'];
-        
-        geminiVoices.forEach((voice) => {
-            let selectedMarker = (selectedVoiceURI === voice.uri) ? " (Đang chọn)" : "";
-            menuOptionsHtml.push(`<option value="${voice.uri}">${voice.name}${selectedMarker}</option>`);
-        });
-
-        eDirect.innerHTML = menuOptionsHtml.join('');
-        eManual.innerHTML = menuOptionsHtml.join('');
-
-        eDirect.style.display = "inline-block";
-        eManual.style.display = "inline-block";
-        speak("Vui lòng chọn cấu hình giọng đọc trí tuệ nhân tạo Gemini");
-
-        let targetMenu = (viewMode === 'manual') ? eManual : eDirect;
-        openDropdownList(targetMenu);
-    }
-
-    function openDropdownList(targetMenu) {
-        if (typeof targetMenu.showPicker === 'function') {
-            targetMenu.showPicker();
-        } else {
-            targetMenu.focus();
-            let clickEvent = new MouseEvent('mousedown', {
-                bubbles: true,
-                cancelable: true,
-                view: window
-            });
-            targetMenu.dispatchEvent(clickEvent);
-        }
-    }
-
-    function handleHiddenSpeedChange(selectElement) {
-        if (!selectElement.value) return;
-
-        let valStr = selectElement.value;
-        let val = parseFloat(valStr);
-        let rateLabel = "";
-
-        if (val === 1.0) {
-            selectedRate = 1.0;
-            selectedPitch = 1.1;
-            rateLabel = "Chậm";
-        } else if (val === 100.0) {
-            selectedRate = 100.0;
-            selectedPitch = 1.0;
-            rateLabel = "Tối đa";
-        }
-        speak(`Đã thay đổi tốc độ giọng đọc sang mức: ${rateLabel}`);
-
-        selectElement.value = "";
-        document.getElementById('speedSelectDirect').style.display = "none";
-        document.getElementById('speedSelectManual').style.display = "none";
-        
-        checkRange();
-
-        if (isManual) {
-            document.getElementById('speedBtnManual').focus();
-        } else {
-            document.getElementById('speedBtnDirect').focus();
-        }
-    }
-
-    // THAY ĐỔI: ĐỔI SANG DÙNG GIỌNG GEMINI ĐƯỢC CHỌN
-    function handleHiddenEngineChange(selectElement) {
-        if (!selectElement.value) return;
-
-        let voiceURI = selectElement.value;
-        selectedVoiceURI = voiceURI;
-        
-        let targetVoice = geminiVoices.find(v => v.uri === voiceURI);
-        let voiceName = targetVoice ? targetVoice.name : "Mới";
-        
-        speak(`Đã chuyển đổi sang ${voiceName}`);
-
-        selectElement.value = "";
-        document.getElementById('engineSelectDirect').style.display = "none";
-        document.getElementById('engineSelectManual').style.display = "none";
-        
-        checkRange();
-
-        if (isManual) {
-            document.getElementById('engineBtnManual').focus();
-        } else {
-            document.getElementById('engineBtnDirect').focus();
-        }
+        recognition.start();
     }
 
     function fadeOut(callback) {
@@ -731,7 +473,18 @@
         pSelect.style.display = "inline-block";
         
         speak("Vui lòng chọn bài trong danh sách phát");
-        openDropdownList(pSelect);
+
+        if (typeof pSelect.showPicker === 'function') {
+            pSelect.showPicker();
+        } else {
+            pSelect.focus();
+            let clickEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            pSelect.dispatchEvent(clickEvent);
+        }
     }
 
     function handleHiddenPlaylistChange(selectElement) {
@@ -781,6 +534,62 @@
             repeatBtn.innerText = "Lặp lại toàn bộ";
             repeatBtn.classList.add('active-repeat');
             speak("lặp lại toàn bộ");
+        }
+    }
+
+    function showSpeedMenu() {
+        document.getElementById('speedBtnDirect').style.display = "none";
+        document.getElementById('speedBtnManual').style.display = "none";
+
+        const sDirect = document.getElementById('speedSelectDirect');
+        const sManual = document.getElementById('speedSelectManual');
+
+        sDirect.style.display = "inline-block";
+        sManual.style.display = "inline-block";
+        speak("Vui lòng chọn tốc độ giọng đọc");
+
+        let targetMenu = isManual ? sManual : sDirect;
+        if (typeof targetMenu.showPicker === 'function') {
+            targetMenu.showPicker();
+        } else {
+            targetMenu.focus();
+            let clickEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            targetMenu.dispatchEvent(clickEvent);
+        }
+    }
+
+    function handleHiddenSpeedChange(selectElement) {
+        if (!selectElement.value) return;
+
+        let val = parseFloat(selectElement.value);
+        let rateLabel = "";
+
+        if (val === 1.0) {
+            selectedRate = 1.0;
+            selectedPitch = 1.1;
+            rateLabel = "Chậm";
+        } else if (val === 100.0) {
+            selectedRate = 100.0;
+            selectedPitch = 1.0;
+            rateLabel = "Tối đa";
+        }
+
+        speak(`Đã thay đổi tốc độ giọng đọc sang mức: ${rateLabel}`);
+        selectElement.value = "";
+        
+        document.getElementById('speedSelectDirect').style.display = "none";
+        document.getElementById('speedSelectManual').style.display = "none";
+        
+        checkRange();
+
+        if (isManual) {
+            document.getElementById('speedBtnManual').focus();
+        } else {
+            document.getElementById('speedBtnDirect').focus();
         }
     }
 
@@ -1100,6 +909,17 @@
         }
     }
 
+    function speak(text) {
+        if (isSpeechMuted) return;
+
+        window.speechSynthesis.cancel(); 
+        let utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'vi-VN';
+        utterance.rate = selectedRate;   
+        utterance.pitch = selectedPitch; 
+        window.speechSynthesis.speak(utterance);
+    }
+
     function handleSmartInput(inputElement) {
         let valueStr = inputElement.value;
         
@@ -1229,11 +1049,6 @@
         document.getElementById('speedSelectManual').value = "";
         document.getElementById('speedSelectDirect').style.display = "none";
         document.getElementById('speedSelectManual').style.display = "none";
-
-        document.getElementById('engineSelectDirect').value = "";
-        document.getElementById('engineSelectManual').value = "";
-        document.getElementById('engineSelectDirect').style.display = "none";
-        document.getElementById('engineSelectManual').style.display = "none";
         
         document.getElementById('playlistSelectDirect').value = "";
         document.getElementById('playlistSelectDirect').style.display = "none";
@@ -1376,7 +1191,7 @@
         if (minStr.length === 1) {
             minStr = "0" + minStr;
         }
-        let mins = parseFloat(parts[1] || 0);
+        let mins = parseFloat(minStr);
 
         if (isNaN(hours)) hours = 0;
         if (isNaN(mins)) mins = 0;
@@ -1440,11 +1255,6 @@
         const speedSelectDirect = document.getElementById('speedSelectDirect');
         const speedSelectManual = document.getElementById('speedSelectManual');
 
-        const engineBtnDirect = document.getElementById('engineBtnDirect');
-        const engineBtnManual = document.getElementById('engineBtnManual');
-        const engineSelectDirect = document.getElementById('engineSelectDirect');
-        const engineSelectManual = document.getElementById('engineSelectManual');
-
         if (timeA !== null && timeB !== null) {
             document.getElementById('replayBtnDirect').style.display = "inline-block";
             document.getElementById('replayBtnManual').style.display = "inline-block";
@@ -1454,11 +1264,6 @@
                 speedBtnManual.style.display = "none";
                 speedSelectDirect.style.display = "none";
                 speedSelectManual.style.display = "none";
-
-                engineBtnDirect.style.display = "none";
-                engineBtnManual.style.display = "none";
-                engineSelectDirect.style.display = "none";
-                engineSelectManual.style.display = "none";
 
                 if (qDirect.value === "" && qManual.value === "") {
                     btnDirect.style.display = "inline-block";
@@ -1487,11 +1292,6 @@
             speedBtnDirect.style.display = "inline-block";
             speedBtnManual.style.display = "inline-block";
         }
-
-        if (engineSelectDirect.style.display !== "inline-block" && engineSelectManual.style.display !== "inline-block") {
-            engineBtnDirect.style.display = "inline-block";
-            engineBtnManual.style.display = "inline-block";
-        }
     }
 
     function resetToDefaultSpeedView() {
@@ -1513,21 +1313,7 @@
         document.getElementById('speedSelectManual').value = "";
         document.getElementById('speedSelectDirect').style.display = "none";
         document.getElementById('speedSelectManual').style.display = "none";
-
-        document.getElementById('engineSelectDirect').value = "";
-        document.getElementById('engineSelectManual').value = "";
-        document.getElementById('engineSelectDirect').style.display = "none";
-        document.getElementById('engineSelectManual').style.display = "none";
         
-        document.getElementById('playlistSelectDirect').value = "";
-        document.getElementById('playlistSelectDirect').style.display = "none";
-        
-        if (filePlaylist.length > 1) {
-            playlistBtnDirect.style.display = "inline-block";
-        } else {
-            playlistBtnDirect.style.display = "none";
-        }
-
         timeA = null;
         timeB = null;
         
@@ -1648,7 +1434,17 @@
         speak(`Vui lòng chọn chất lượng ${labelCut} muốn xuất`);
 
         let targetMenu = isManual ? qManual : qDirect;
-        openDropdownList(targetMenu);
+        if (typeof targetMenu.showPicker === 'function') {
+            targetMenu.showPicker();
+        } else {
+            targetMenu.focus();
+            let clickEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            targetMenu.dispatchEvent(clickEvent);
+        }
     }
 
     function executeEncoding(audioBuffer, bitrateVal, finalFileName) {
@@ -1682,7 +1478,7 @@
                 let sL = Math.max(-1, Math.min(1, leftFloat[i]));
                 leftInt16[i] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
                 
-                let sR = Math.max(-1, Math.min(1, rightFloat[i]));
+                let sR = Math.max(-1, Math.min(1, leftFloat[i]));
                 rightInt16[i] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
             }
             
