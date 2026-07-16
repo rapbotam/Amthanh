@@ -62,6 +62,7 @@
 <div id="main-selector-row" class="file-selector-row">
     <button class="file-btn" onclick="triggerInput('audio')">Chọn bài hát</button>
     <button class="file-btn" onclick="triggerInput('video')">Chọn video</button>
+    <button id="mainVoiceSearchBtn" class="file-btn" style="background: #cc3300;" onclick="startOnlineVoiceSearchFlow()">Tìm bằng giọng nói</button>
 </div>
 
 <input type="file" id="audioFileInput" accept="audio/*" style="display: none;" multiple onchange="handleFileChange(this, 'audio')">
@@ -206,6 +207,16 @@
     let globalRecognition = null;
     let isVoiceListening = false;
 
+    // Khởi tạo CORS Proxy miễn phí để vượt qua rào cản Zing/NCT khi cắt nhạc
+    const CORS_PROXY = "https://your-cors-proxy.workers.dev/?url=";
+
+    // QUẢN LÝ NGUỒN TÌM KIẾM ONLINE
+    // null: chưa chọn | 'zing': Zing MP3 | 'nct': Nhạc Của Tui
+    let selectedOnlineSource = null; 
+    // Trạng thái của luồng hỏi nguồn: 
+    // 'idle': bình thường | 'waiting_source': đang chờ người dùng nói nguồn muốn chọn | 'waiting_song': chờ nói tên bài hát
+    let searchFlowState = "idle"; 
+
     function updateVoiceSearchVisibility() {
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
         const btnManual = document.getElementById('voiceSearchBtnManual');
@@ -233,6 +244,229 @@
             .trim();
     }
 
+    /* ==========================================
+       LUỒNG TÌM KIẾM TRỰC TUYẾN 1 NGUỒN DUY NHẤT
+       (Sửa lỗi bất đồng bộ mở mic quá sớm)
+       ========================================== */
+
+    function speakWithCallback(text, callback) {
+        if (isSpeechMuted) {
+            if (callback) callback();
+            return;
+        }
+
+        window.speechSynthesis.cancel(); 
+        let utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'vi-VN';
+        utterance.rate = selectedRate;   
+        utterance.pitch = selectedPitch; 
+
+        if (callback) {
+            utterance.onend = function() {
+                callback();
+            };
+            utterance.onerror = function() {
+                callback();
+            };
+        }
+        window.speechSynthesis.speak(utterance);
+    }
+
+    function startOnlineVoiceSearchFlow() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            speak("Trình duyệt của bạn không hỗ trợ tính năng tìm kiếm bằng giọng nói.");
+            return;
+        }
+
+        // Bước 1: Nếu chưa chọn nguồn, hỏi người dùng muốn tìm ở đâu
+        if (!selectedOnlineSource) {
+            searchFlowState = "waiting_source";
+            speakWithCallback(
+                "Bạn muốn tìm nguồn nhạc ở đâu? Zing em pi ba hay nhạc của tôi?", 
+                function() {
+                    activateSpeechRecognitionForOnlineFlow();
+                }
+            );
+        } else {
+            // Nếu đã lưu nguồn từ trước, vào thẳng bước hỏi tên bài hát
+            searchFlowState = "waiting_song";
+            let sourceLabel = selectedOnlineSource === "zing" ? "Zing em pi ba" : "nhạc của tôi";
+            
+            speakWithCallback(
+                `Đang tìm kiếm trên ${sourceLabel}. Xin mời nói tên bài hát cần tìm.`, 
+                function() {
+                    activateSpeechRecognitionForOnlineFlow();
+                }
+            );
+        }
+    }
+
+    function activateSpeechRecognitionForOnlineFlow() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const mainMicBtn = document.getElementById('mainVoiceSearchBtn');
+        
+        if (globalRecognition && isVoiceListening) {
+            globalRecognition.stop();
+        }
+
+        const recognition = new SpeechRecognition();
+        globalRecognition = recognition;
+        
+        recognition.lang = 'vi-VN';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = () => {
+            isVoiceListening = true;
+            mainMicBtn.classList.add('listening');
+            mainMicBtn.innerText = "Đang nghe...";
+        };
+
+        recognition.onerror = (event) => {
+            isVoiceListening = false;
+            mainMicBtn.classList.remove('listening');
+            mainMicBtn.innerText = "Tìm bằng giọng nói";
+            
+            if (event.error !== 'no-speech') {
+                speak("Lỗi kết nối mic hoặc chưa cấp quyền âm thanh.");
+            } else {
+                speak("Tôi chưa nghe rõ, vui lòng bấm nút để thử lại.");
+            }
+            searchFlowState = "idle";
+        };
+
+        recognition.onend = () => {
+            isVoiceListening = false;
+            mainMicBtn.classList.remove('listening');
+            mainMicBtn.innerText = "Tìm bằng giọng nói";
+        };
+
+        recognition.onresult = (event) => {
+            const voiceResult = event.results[0][0].transcript;
+            const lowerResult = voiceResult.toLowerCase().trim();
+
+            // Luồng 1: Xác nhận nguồn nhạc
+            if (searchFlowState === "waiting_source") {
+                if (lowerResult.includes("zing") || lowerResult.includes("pi ba") || lowerResult.includes("riêng")) {
+                    selectedOnlineSource = "zing";
+                    searchFlowState = "waiting_song";
+                    speakWithCallback(
+                        "Đã xác nhận chọn nguồn Zing em pi ba. Xin mời nói tên bài hát cần tìm.",
+                        function() {
+                            activateSpeechRecognitionForOnlineFlow();
+                        }
+                    );
+                } else if (lowerResult.includes("của tôi") || lowerResult.includes("nhạc của") || lowerResult.includes("tui")) {
+                    selectedOnlineSource = "nct";
+                    searchFlowState = "waiting_song";
+                    speakWithCallback(
+                        "Đã xác nhận chọn nguồn nhạc của tôi. Xin mời nói tên bài hát cần tìm.",
+                        function() {
+                            activateSpeechRecognitionForOnlineFlow();
+                        }
+                    );
+                } else {
+                    speak("Nguồn nhạc không hợp lệ. Vui lòng bấm chọn lại.");
+                    searchFlowState = "idle";
+                }
+            } 
+            // Luồng 2: Xác nhận tên bài hát để gửi request tìm kiếm
+            else if (searchFlowState === "waiting_song") {
+                searchFlowState = "idle"; // Đưa trạng thái về bình thường
+                executeOnlineMusicSearch(voiceResult);
+            }
+        };
+
+        recognition.start();
+    }
+
+    async function executeOnlineMusicSearch(query) {
+        if (!query || query.trim() === "") {
+            speak("Không nhận dạng được tên bài hát.");
+            return;
+        }
+
+        let sourceLabel = selectedOnlineSource === "zing" ? "Zing em pi ba" : "nhạc của tôi";
+        speak(`Đang tìm kiếm bài hát ${query} trên hệ thống ${sourceLabel}`);
+
+        try {
+            let searchApiUrl = "";
+            if (selectedOnlineSource === "zing") {
+                searchApiUrl = `https://ac.mp3.zing.vn/complete?type=artist,song,key,code&num=1&query=${encodeURIComponent(query)}`;
+            } else {
+                searchApiUrl = `https://graph.nhaccuatui.com/v1/commons/search?keyword=${encodeURIComponent(query)}&pageIndex=1&pageSize=1`;
+            }
+
+            const response = await fetch(CORS_PROXY + encodeURIComponent(searchApiUrl));
+            const data = await response.json();
+
+            let directMp3Url = "";
+            let songName = "";
+            let artistName = "";
+
+            if (selectedOnlineSource === "zing") {
+                const song = data.data && data.data[0] && data.data[0].song && data.data[0].song[0];
+                if (!song) throw new Error("Không tìm thấy");
+                songName = song.name;
+                artistName = song.artist;
+                directMp3Url = `http://api.mp3.zing.vn/api/streaming/audio/${song.id}/128`;
+            } else {
+                const song = data.data && data.data.song && data.data.song[0];
+                if (!song) throw new Error("Không tìm thấy");
+                songName = song.title;
+                artistName = song.artist;
+                directMp3Url = `http://www.nhaccuatui.com/download/song/${song.key}`;
+            }
+
+            playOnlineTrack(directMp3Url, songName, artistName);
+
+        } catch (error) {
+            console.error(error);
+            speak(`Không thể tìm thấy bài hát ${query} trên hệ thống ${sourceLabel}. Vui lòng thử lại tên khác.`);
+        }
+    }
+
+    function playOnlineTrack(mp3Url, title, artist) {
+        if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
+        resetAllLoopButtons(false);
+        activePlayer.pause();
+        
+        currentSongName = title;
+        currentArtistName = artist;
+        currentFileType = 'audio';
+        originalFullFileName = title + " .mp3"; 
+
+        activePlayer = new Audio();
+        activePlayer.crossOrigin = "anonymous"; 
+        activePlayer.src = CORS_PROXY + encodeURIComponent(mp3Url);
+
+        activePlayer.onplay = () => { 
+            playBtn.innerText = "Tạm dừng"; 
+            updateMediaSession();
+        };
+        activePlayer.onpause = () => { playBtn.innerText = "Phát"; };
+        activePlayer.onended = handleTrackEnded;
+
+        speak(`Đã tìm thấy. Đang phát bài hát ${title}`);
+        fadeIn();
+
+        controls.style.display = "block";
+        configureSkipModes('audio');
+        
+        playlistBtnDirect.style.display = "none";
+        oldestFileBtn.style.display = "none";
+        prevTrackBtn.style.display = "none";
+        nextTrackBtn.style.display = "none";
+        repeatBtn.style.display = "none";
+
+        document.getElementById('main-selector-row').style.display = "none";
+    }
+
+    /* ==========================================
+       GIỮ NGUYÊN HOÀN TOÀN LOGIC THƯ VIỆN CŨ
+       ========================================== */
+
     function startVoiceSearch() {
         if (filePlaylist.length === 0) {
             speak("Danh sách phát hiện đang trống, vui lòng chọn tệp trước.");
@@ -242,9 +476,8 @@
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
         const btnManual = document.getElementById('voiceSearchBtnManual');
 
-        // Bổ sung logic tăng tốc: Nếu đang nghe, người dùng ấn nút lần nữa để tìm kiếm ngay lập tức
         if (isVoiceListening && globalRecognition) {
-            globalRecognition.stop(); // Dừng ghi âm ngay lập tức để kích hoạt sự kiện onresult
+            globalRecognition.stop(); 
             return;
         }
 
@@ -289,17 +522,13 @@
             const voiceResult = event.results[0][0].transcript;
             const lowerResult = voiceResult.toLowerCase();
 
-            // Xử lý lệnh kiểm tra thông tin nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("thông tin") || lowerResult.includes("check") || lowerResult.includes("kiểm tra")) {
                 readSongInfo();
                 return;
             }
 
-            // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai")) {
                 let amount = 0;
-                
-                // Chuẩn hóa một số chữ số phổ biến dạng nói sang chữ số để xử lý chính xác
                 let chuẩnHóaResult = lowerResult
                     .replace(/mười lăm/g, "15")
                     .replace(/ba mươi/g, "30")
@@ -326,7 +555,6 @@
                         speakTuaInfo("Tua tới", activePlayer.currentTime);
                     }
                 } else {
-                    // Cứu cánh thông minh: Nếu nói "tua đi/tua lại" không kèm số, lấy giá trị của chế độ tua hiện tại
                     amount = skipModes[currentModeIndex].value;
                     if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
                         activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
@@ -339,7 +567,6 @@
                 return;
             }
 
-            // Trả về logic tìm kiếm theo tên tệp nếu không trùng lệnh chức năng
             const cleanVoiceQuery = cleanTextForSearch(voiceResult);
             if (!cleanVoiceQuery) {
                 speak("Không nghe rõ từ khóa, vui lòng thử lại.");
@@ -1514,8 +1741,9 @@
     function processFastCutAudio(mode) {
         if (!mode) return;
 
-        const currentFile = filePlaylist[currentFileIndex];
-        if (!currentFile) {
+        const isOnline = activePlayer.src && activePlayer.src.startsWith(CORS_PROXY);
+        
+        if (!isOnline && filePlaylist.length === 0) {
             speak("Không tìm thấy tệp dữ liệu hiện tại");
             return;
         }
@@ -1533,35 +1761,68 @@
         if (currentFileType === 'audio') {
             speak(`Đang cắt nhạc chuông`);
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const fileReader = new FileReader();
+            
+            if (isOnline) {
+                fetch(activePlayer.src)
+                    .then(response => response.arrayBuffer())
+                    .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+                    .then(audioBuffer => {
+                        const sampleRate = audioBuffer.sampleRate;
+                        const startSample = Math.floor(timeA * sampleRate);
+                        const endSample = Math.floor(timeB * sampleRate);
+                        const durationSamples = endSample - startSample;
 
-            fileReader.onload = function(ev) {
-                audioCtx.decodeAudioData(ev.target.result).then(audioBuffer => {
-                    const sampleRate = audioBuffer.sampleRate;
-                    const startSample = Math.floor(timeA * sampleRate);
-                    const endSample = Math.floor(timeB * sampleRate);
-                    const durationSamples = endSample - startSample;
+                        const cutBuffer = audioCtx.createBuffer(
+                            audioBuffer.numberOfChannels,
+                            durationSamples,
+                            sampleRate
+                        );
 
-                    const cutBuffer = audioCtx.createBuffer(
-                        audioBuffer.numberOfChannels,
-                        durationSamples,
-                        sampleRate
-                    );
+                        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                            const originalData = audioBuffer.getChannelData(channel);
+                            const cutData = cutBuffer.getChannelData(channel);
+                            const segment = originalData.subarray(startSample, endSample);
+                            cutData.set(segment);
+                        }
 
-                    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-                        const originalData = audioBuffer.getChannelData(channel);
-                        const cutData = cutBuffer.getChannelData(channel);
-                        const segment = originalData.subarray(startSample, endSample);
-                        cutData.set(segment);
-                    }
+                        executeEncoding(cutBuffer, bitrateVal, cleanName + ".mp3");
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        speak("Quá trình tải và giải mã tệp trực tuyến thất bại.");
+                        resetToDefaultSpeedView();
+                    });
+            } else {
+                const currentFile = filePlaylist[currentFileIndex];
+                const fileReader = new FileReader();
+                fileReader.onload = function(ev) {
+                    audioCtx.decodeAudioData(ev.target.result).then(audioBuffer => {
+                        const sampleRate = audioBuffer.sampleRate;
+                        const startSample = Math.floor(timeA * sampleRate);
+                        const endSample = Math.floor(timeB * sampleRate);
+                        const durationSamples = endSample - startSample;
 
-                    executeEncoding(cutBuffer, bitrateVal, cleanName + ".mp3");
-                }).catch(err => {
-                    speak("Quá trình giải mã cấu trúc bài hát thất bại.");
-                    resetToDefaultSpeedView();
-                });
-            };
-            fileReader.readAsArrayBuffer(currentFile);
+                        const cutBuffer = audioCtx.createBuffer(
+                            audioBuffer.numberOfChannels,
+                            durationSamples,
+                            sampleRate
+                        );
+
+                        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                            const originalData = audioBuffer.getChannelData(channel);
+                            const cutData = cutBuffer.getChannelData(channel);
+                            const segment = originalData.subarray(startSample, endSample);
+                            cutData.set(segment);
+                        }
+
+                        executeEncoding(cutBuffer, bitrateVal, cleanName + ".mp3");
+                    }).catch(err => {
+                        speak("Quá trình giải mã cấu trúc bài hát thất bại.");
+                        resetToDefaultSpeedView();
+                    });
+                };
+                fileReader.readAsArrayBuffer(currentFile);
+            }
         } else {
             speak(`Đang xử lý trích xuất âm thanh từ video. Vui lòng đợi trong giây lát.`);
             
