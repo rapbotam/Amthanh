@@ -242,8 +242,9 @@
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
         const btnManual = document.getElementById('voiceSearchBtnManual');
 
+        // Bổ sung logic tăng tốc: Nếu đang nghe, người dùng ấn nút lần nữa để tìm kiếm ngay lập tức
         if (isVoiceListening && globalRecognition) {
-            globalRecognition.stop(); 
+            globalRecognition.stop(); // Dừng ghi âm ngay lập tức để kích hoạt sự kiện onresult
             return;
         }
 
@@ -256,21 +257,15 @@
         const recognition = new SpeechRecognition();
         globalRecognition = recognition;
         recognition.lang = 'vi-VN';
-        
-        // KÍCH HOẠT NHẬN DIỆN THỜI GIAN THỰC ĐỂ PHẢN HỒI LẬP TỨC
-        recognition.interimResults = true; 
-        recognition.continuous = true; // Cho phép bắt âm liên tục không bị ngắt quãng giữa chừng
+        recognition.interimResults = false;
         recognition.maxAlternatives = 1;
-
-        let actionExecuted = false; // Cờ chặn việc kích hoạt nhiều lần cùng một lệnh trong một lượt nói
 
         recognition.onstart = () => {
             isVoiceListening = true;
-            actionExecuted = false;
             btnDirect.classList.add('listening');
             btnManual.classList.add('listening');
-            btnDirect.innerText = "Đang nghe...";
-            btnManual.innerText = "Đang nghe...";
+            btnDirect.innerText = "Tìm ngay";
+            btnManual.innerText = "Tìm ngay";
         };
 
         recognition.onerror = (event) => {
@@ -291,32 +286,20 @@
         };
 
         recognition.onresult = (event) => {
-            if (actionExecuted) return; // Nếu lệnh đã được thực thi ngay lập tức thì bỏ qua
+            const voiceResult = event.results[0][0].transcript;
+            const lowerResult = voiceResult.toLowerCase();
 
-            let voiceResult = "";
-            for (let i = event.resultIndex; i < event.results.length; ++i) {
-                if (event.results[i].isFinal || event.results[i][0].confidence > 0.1) {
-                    voiceResult += event.results[i][0].transcript;
-                }
-            }
-            
-            const lowerResult = voiceResult.toLowerCase().trim();
-            if (!lowerResult) return;
-
-            // 1. KIỂM TRA LỆNH THÔNG TIN (PHẢN HỒI SIÊU TỐC)
+            // Xử lý lệnh kiểm tra thông tin nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("thông tin") || lowerResult.includes("check") || lowerResult.includes("kiểm tra")) {
-                actionExecuted = true;
-                recognition.stop(); // Ngắt ghi âm ngay lập tức
                 readSongInfo();
                 return;
             }
 
-            // 2. KIỂM TRA LỆNH TUA (PHẢN HỒI SIÊU TỐC)
-            if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai") || lowerResult.includes("lui") || lowerResult.includes("toi")) {
-                actionExecuted = true;
-                recognition.stop(); // Ngắt ghi âm ngay lập tức
-
+            // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
+            if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai")) {
                 let amount = 0;
+                
+                // Chuẩn hóa một số chữ số phổ biến dạng nói sang chữ số để xử lý chính xác
                 let chuẩnHóaResult = lowerResult
                     .replace(/mười lăm/g, "15")
                     .replace(/ba mươi/g, "30")
@@ -343,7 +326,7 @@
                         speakTuaInfo("Tua tới", activePlayer.currentTime);
                     }
                 } else {
-                    // Nếu người dùng chỉ nói "tua đi" hoặc "tua lại" không kèm số, sử dụng giá trị chế độ tua hiện hành
+                    // Cứu cánh thông minh: Nếu nói "tua đi/tua lại" không kèm số, lấy giá trị của chế độ tua hiện tại
                     amount = skipModes[currentModeIndex].value;
                     if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
                         activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
@@ -356,45 +339,40 @@
                 return;
             }
 
-            // 3. XỬ LÝ TÌM BÀI THEO TÊN (Thực hiện khi trình duyệt báo nhận diện xong câu nói hoàn chỉnh)
-            if (event.results[event.results.length - 1].isFinal) {
-                actionExecuted = true;
-                recognition.stop();
+            // Trả về logic tìm kiếm theo tên tệp nếu không trùng lệnh chức năng
+            const cleanVoiceQuery = cleanTextForSearch(voiceResult);
+            if (!cleanVoiceQuery) {
+                speak("Không nghe rõ từ khóa, vui lòng thử lại.");
+                return;
+            }
 
-                const cleanVoiceQuery = cleanTextForSearch(lowerResult);
-                if (!cleanVoiceQuery) {
-                    speak("Không nghe rõ từ khóa, vui lòng thử lại.");
-                    return;
+            let foundIndex = -1;
+            for (let i = 0; i < filePlaylist.length; i++) {
+                let cleanFileName = cleanTextForSearch(getCleanFileName(filePlaylist[i].name));
+                if (cleanFileName.includes(cleanVoiceQuery)) {
+                    foundIndex = i;
+                    break;
                 }
+            }
 
-                let foundIndex = -1;
-                for (let i = 0; i < filePlaylist.length; i++) {
-                    let cleanFileName = cleanTextForSearch(getCleanFileName(filePlaylist[i].name));
-                    if (cleanFileName.includes(cleanVoiceQuery)) {
-                        foundIndex = i;
-                        break;
-                    }
-                }
+            if (foundIndex !== -1) {
+                fadeOut(() => {
+                    if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
+                    resetAllLoopButtons(false);
+                    activePlayer.pause();
+                    activePlayer.src = "";
+                    videoPlayer.src = "";
+                    timeA = null; timeB = null;
+                    document.getElementById('replayBtnDirect').style.display = "none";
+                    document.getElementById('replayBtnManual').style.display = "none";
+                    resetToDefaultSpeedView();
 
-                if (foundIndex !== -1) {
-                    fadeOut(() => {
-                        if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-                        resetAllLoopButtons(false);
-                        activePlayer.pause();
-                        activePlayer.src = "";
-                        videoPlayer.src = "";
-                        timeA = null; timeB = null;
-                        document.getElementById('replayBtnDirect').style.display = "none";
-                        document.getElementById('replayBtnManual').style.display = "none";
-                        resetToDefaultSpeedView();
-
-                        currentFileIndex = foundIndex;
-                        playCurrentPlaylistItem();
-                        document.activeElement.blur(); 
-                    });
-                } else {
-                    speak("Xin lỗi. Không tìm thấy tệp bạn đã yêu cầu, vui lòng thử lại.");
-                }
+                    currentFileIndex = foundIndex;
+                    playCurrentPlaylistItem();
+                    document.activeElement.blur(); 
+                });
+            } else {
+                speak("Xin lỗi. Không tìm thấy tệp bạn đã yêu cầu, vui lòng thử lại.");
             }
         };
 
