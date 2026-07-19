@@ -18,7 +18,6 @@
         button, select { background: #333; color: white; border: 1px solid #555; padding: 12px 18px; border-radius: 4px; font-size: 14px; }
         button:hover, select:hover { background: #555; }
 
-        /* Style tối ưu riêng cho nút tìm kiếm giọng nói */
         .voice-search-btn { background: #cc3300; border-color: #ff5533; font-weight: bold; display: none; }
         .voice-search-btn:hover { background: #ff3300; }
         .voice-search-btn.listening { background: #ffcc00 !important; color: #000 !important; border-color: #ffff00 !important; }
@@ -52,6 +51,10 @@
         .playlist-trigger-btn:hover { background: #009966; }
         .actual-playlist-select { display: none; background: #006644; color: white; border: 1px solid #009966; font-weight: bold; }
         
+        .history-trigger-btn { background: #cca300; border-color: #ffe680; color: #000; font-weight: bold; display: none; }
+        .history-trigger-btn:hover { background: #e6b800; }
+        .actual-history-select { display: none; background: #cca300; color: #000; border: 1px solid #ffe680; font-weight: bold; }
+
         .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }
     </style>
 </head>
@@ -73,7 +76,7 @@
     <div class="row" id="mainControlsRow">
         <button id="rewindBtn" onclick="rewind()">Tua lùi 15 giây</button>
         <button id="prevTrackBtn" onclick="playPreviousTrack()">Bài hát trước</button>
-        <button id="playBtn" onclick="togglePlay()">Phát</button>
+        <button id="playBtn" onclick="handlePlayToggleClick()">Phát</button>
         <button id="nextTrackBtn" onclick="playNextTrack()">Bài hát tiếp theo</button>
         <button id="forwardBtn" onclick="forward()">Tua đi 15 giây</button>
         <button id="skipToggleBtn" onclick="toggleSkipMode()">Chuyển đổi giao diện tua</button>
@@ -104,7 +107,15 @@
             <option value="100.0">Tối đa</option>
         </select>
 
-        <button id="fastCutBtnDirect" class="fast-cut-btn" onclick="showQualityMenu()">Cắt nhạc chuông</button>
+        <button id="historyBtnDirect" class="history-trigger-btn" onclick="showHistoryMenu()">Lịch sử audio đã cắt</button>
+        <select id="historySelectDirect" class="actual-history-select" onchange="handleHiddenHistoryChange(this)">
+            <option value="" disabled selected hidden>Chọn tùy chọn lịch sử</option>
+            <option value="5">Nhạc chuông đã cắt</option>
+            <option value="3">Tải về</option>
+            <option value="4">Xóa lịch sử</option>
+        </select>
+
+        <button id="fastCutBtnDirect" class="fast-cut-btn" onclick="handleFastCutButtonClick()">Cắt nhạc chuông</button>
         <select id="qualitySelectDirect" class="quality-select" onchange="processFastCutAudio(this.value)">
             <option value="" disabled selected hidden>Chọn chất lượng</option>
             <option value="128">chất lượng tiêu chuẩn 128kb/s</option>
@@ -127,7 +138,15 @@
             <option value="100.0">Tối đa</option>
         </select>
 
-        <button id="fastCutBtnManual" class="fast-cut-btn" onclick="showQualityMenu()">Cắt nhạc chuông</button>
+        <button id="historyBtnManual" class="history-trigger-btn" onclick="showHistoryMenu()">Lịch sử audio đã cắt</button>
+        <select id="historySelectManual" class="actual-history-select" onchange="handleHiddenHistoryChange(this)">
+            <option value="" disabled selected hidden>Chọn tùy chọn lịch sử</option>
+            <option value="5">Nhạc chuông đã cắt</option>
+            <option value="3">Tải về</option>
+            <option value="4">Xóa lịch sử</option>
+        </select>
+
+        <button id="fastCutBtnManual" class="fast-cut-btn" onclick="handleFastCutButtonClick()">Cắt nhạc chuông</button>
         <select id="qualitySelectManual" class="quality-select" onchange="processFastCutAudio(this.value)">
             <option value="" disabled selected hidden>Chọn chất lượng</option>
             <option value="128">chất lượng tiêu chuẩn 128kb/s</option>
@@ -186,6 +205,11 @@
 
     let repeatMode = 0; 
 
+    let cutCountdownInterval = null;
+    let isCountingDown = false;
+
+    let isHistoryTimeLoopActive = false;
+
     const audioSkipModes = [
         { value: 15, label: "15 giây", text: "15 giây" },
         { value: 30, label: "30 giây", text: "30 giây" },
@@ -199,12 +223,75 @@
     let skipModes = [...audioSkipModes];
     let currentModeIndex = 0; 
     let lastClickTime = 0;
-
     let fadeInterval = null;
 
-    // Biến toàn cục quản lý đối tượng SpeechRecognition để điều khiển từ xa
     let globalRecognition = null;
     let isVoiceListening = false;
+
+    let lastOldestFileClickTime = 0;
+    let oldestFileClickTimeout = null;
+
+    // Biến xử lý logic nhấn đúp cho nút phát/tạm dừng
+    let lastPlayClickTime = 0;
+    let playClickTimeout = null;
+
+    const DB_NAME = "AudioPlayerStorage";
+    const DB_VERSION = 1;
+    const STORE_NAME = "cachedFiles";
+
+    function initDb(callback) {
+        let request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = function(e) {
+            let db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: "id" });
+            }
+        };
+        request.onsuccess = function(e) {
+            if (callback) callback(e.target.result);
+        };
+        request.onerror = function() {
+            console.error("Không thể khởi tạo cơ sở dữ liệu ngầm IndexedDB.");
+        };
+    }
+
+    function saveFileToDb(fileBlob, fileName) {
+        initDb(function(db) {
+            let transaction = db.transaction([STORE_NAME], "readwrite");
+            let store = transaction.objectStore(STORE_NAME);
+            store.put({ id: fileName, blob: fileBlob, name: fileName });
+        });
+    }
+
+    function getFileFromDb(fileName, callback) {
+        initDb(function(db) {
+            let transaction = db.transaction([STORE_NAME], "readonly");
+            let store = transaction.objectStore(STORE_NAME);
+            let request = store.get(fileName);
+            request.onsuccess = function(e) {
+                if (e.target.result) {
+                    callback(e.target.result.blob);
+                } else {
+                    callback(null);
+                }
+            };
+            request.onerror = function() {
+                callback(null);
+            };
+        });
+    }
+
+    function clearAllFilesFromDb() {
+        initDb(function(db) {
+            let transaction = db.transaction([STORE_NAME], "readwrite");
+            transaction.objectStore(STORE_NAME).clear();
+        });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        cleanExpiredHistory();
+        updateHistoryButtonVisibility();
+    });
 
     function updateVoiceSearchVisibility() {
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
@@ -213,14 +300,341 @@
             btnDirect.style.display = "inline-block";
             btnManual.style.display = "inline-block";
         } else {
-            if (filePlaylist.length > 0) {
-                btnDirect.style.display = "inline-block";
-                btnManual.style.display = "inline-block";
-            } else {
-                btnDirect.style.display = "none";
-                btnManual.style.display = "none";
-            }
+            btnDirect.style.display = "none";
+            btnManual.style.display = "none";
         }
+    }
+
+    function updateHistoryButtonVisibility() {
+        const historyData = localStorage.getItem('cutHistoryList');
+        const btnDirect = document.getElementById('historyBtnDirect');
+        const btnManual = document.getElementById('historyBtnManual');
+        
+        if (historyData) {
+            try {
+                const parsedList = JSON.parse(historyData);
+                if (parsedList && parsedList.length > 0) {
+                    btnDirect.style.display = "inline-block";
+                    btnManual.style.display = "inline-block";
+                    return;
+                }
+            } catch(e) {}
+        }
+        btnDirect.style.display = "none";
+        btnManual.style.display = "none";
+    }
+
+    function cleanExpiredHistory() {
+        const historyData = localStorage.getItem('cutHistoryList');
+        if (!historyData) return;
+        try {
+            let parsedList = JSON.parse(historyData);
+            const now = Date.now();
+            let validList = parsedList.filter(item => now < item.expireTime);
+            
+            if (validList.length !== parsedList.length) {
+                if (validList.length === 0) {
+                    localStorage.removeItem('cutHistoryList');
+                    clearAllFilesFromDb();
+                } else {
+                    localStorage.setItem('cutHistoryList', JSON.stringify(validList));
+                }
+            }
+        } catch(e) {
+            localStorage.removeItem('cutHistoryList');
+            clearAllFilesFromDb();
+        }
+        updateHistoryButtonVisibility();
+    }
+
+    function saveToCutHistory(fileName, type, startTime, endTime, exportedBlob) {
+        const now = Date.now();
+        const expireTime = now + (1 * 60 * 60 * 1000); 
+        
+        let historyData = localStorage.getItem('cutHistoryList');
+        let parsedList = [];
+        if (historyData) {
+            try { parsedList = JSON.parse(historyData); } catch(e) { parsedList = []; }
+        }
+
+        const historyObj = {
+            id: now + "_" + Math.random().toString(36).substr(2, 5),
+            fileName: fileName,
+            fileType: type,
+            timeA: startTime,
+            timeB: endTime,
+            expireTime: expireTime,
+            blobUrl: ""
+        };
+        
+        if(exportedBlob) {
+            const reader = new FileReader();
+            reader.onloadend = function() {
+                historyObj.blobUrl = reader.result;
+                parsedList.push(historyObj);
+                localStorage.setItem('cutHistoryList', JSON.stringify(parsedList));
+                updateHistoryButtonVisibility();
+            };
+            reader.readAsDataURL(exportedBlob);
+        } else {
+            parsedList.push(historyObj);
+            localStorage.setItem('cutHistoryList', JSON.stringify(parsedList));
+            updateHistoryButtonVisibility();
+        }
+    }
+
+    function showHistoryMenu() {
+        cleanExpiredHistory();
+        const historyData = localStorage.getItem('cutHistoryList');
+        if (!historyData) {
+            speak("Lịch sử đã hết hạn hoặc trống.");
+            return;
+        }
+
+        const hDirect = document.getElementById('historySelectDirect');
+        const hManual = document.getElementById('historySelectManual');
+        
+        document.getElementById('historyBtnDirect').style.display = "none";
+        document.getElementById('historyBtnManual').style.display = "none";
+
+        hDirect.style.display = "inline-block";
+        hManual.style.display = "inline-block";
+        speak("Vui lòng chọn tùy chọn lịch sử");
+
+        let targetMenu = isManual ? hManual : hDirect;
+        if (typeof targetMenu.showPicker === 'function') {
+            targetMenu.showPicker();
+        } else {
+            targetMenu.focus();
+            let clickEvent = new MouseEvent('mousedown', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            });
+            targetMenu.dispatchEvent(clickEvent);
+        }
+    }
+
+    function handleHiddenHistoryChange(selectElement) {
+        if (!selectElement.value) return;
+        let choice = selectElement.value;
+        selectElement.value = "";
+
+        document.getElementById('historySelectDirect').style.display = "none";
+        document.getElementById('historySelectManual').style.display = "none";
+        
+        updateHistoryButtonVisibility();
+
+        if (choice === "4") {
+            localStorage.removeItem('cutHistoryList');
+            clearAllFilesFromDb();
+            updateHistoryButtonVisibility();
+            speak("Đã xóa lịch sử và giải phóng dung lượng.");
+            if (isManual) {
+                document.getElementById('historyBtnManual').style.display = "none";
+            } else {
+                document.getElementById('historyBtnDirect').style.display = "none";
+            }
+            return;
+        }
+
+        const historyData = localStorage.getItem('cutHistoryList');
+        if (!historyData) {
+            speak("Lịch sử không tồn tại hoặc đã hết hạn.");
+            return;
+        }
+        let parsedList = JSON.parse(historyData);
+
+        if (choice === "5") {
+            buildSubMenuContainer("Chọn nhạc chuông đã cắt", parsedList, (item) => {
+                if (!item.blobUrl) {
+                    speak("Không tìm thấy dữ liệu tệp nhạc chuông.");
+                    return;
+                }
+                fadeOut(() => {
+                    resetToDefaultSpeedView();
+                    isHistoryTimeLoopActive = false;
+                    originalFullFileName = "Kênh_Nhạc_Chuông_" + item.fileName;
+                    currentFileType = "audio";
+                    currentSongName = "Nhạc chuông: " + getCleanFileName(item.fileName);
+                    currentArtistName = "";
+
+                    activePlayer = new Audio(item.blobUrl);
+                    activePlayer.onplay = () => { playBtn.innerText = "Tạm dừng"; };
+                    activePlayer.onpause = () => { playBtn.innerText = "Phát"; };
+                    activePlayer.onended = handleTrackEnded;
+
+                    setTimeout(() => {
+                        fadeIn();
+                        speak(`Đang phát nhạc chuông của bài ${getCleanFileName(item.fileName)}`);
+                        updateMediaSession();
+                    }, 400);
+                });
+            });
+            return;
+        }
+
+        if (choice === "3") {
+            let currentQuality = localStorage.getItem('defaultQuality') || "128";
+            buildSubMenuContainer("Chọn tệp tải về", parsedList, (item) => {
+                let matchedIndex = filePlaylist.findIndex(f => f.name === item.fileName);
+                if (matchedIndex !== -1) {
+                    reEncodeAndDownload(filePlaylist[matchedIndex], item, currentQuality);
+                } else {
+                    getFileFromDb(item.fileName, function(cachedBlob) {
+                        if (cachedBlob) {
+                            reEncodeAndDownload(cachedBlob, item, currentQuality);
+                        } else {
+                            speak("Không tìm thấy dữ liệu gốc, tiến hành tải trực tiếp bản lưu.");
+                            const autoDownloadLink = document.createElement('a');
+                            autoDownloadLink.href = item.blobUrl;
+                            autoDownloadLink.setAttribute('download', "Nhạc_chuông_" + getCleanFileName(item.fileName) + ".mp3");
+                            document.body.appendChild(autoDownloadLink);
+                            autoDownloadLink.click();
+                            document.body.removeChild(autoDownloadLink);
+                        }
+                    });
+                }
+            });
+        }
+        
+        if (isManual) {
+            document.getElementById('historyBtnManual').focus();
+        } else {
+            document.getElementById('historyBtnDirect').focus();
+        }
+    }
+
+    function buildSubMenuContainer(menuTitle, dataList, clickCallback) {
+        removeSubMenuContainer();
+
+        let selectContainer = document.createElement('select');
+        selectContainer.id = "dynamicHistorySubMenu";
+        selectContainer.className = "actual-history-select";
+        selectContainer.style.display = "inline-block";
+
+        let defaultOpt = document.createElement('option');
+        defaultOpt.value = "";
+        defaultOpt.disabled = true;
+        defaultOpt.selected = true;
+        defaultOpt.hidden = true;
+        defaultOpt.innerText = menuTitle;
+        selectContainer.appendChild(defaultOpt);
+
+        dataList.forEach((item, idx) => {
+            let opt = document.createElement('option');
+            opt.value = idx;
+            let titleText = `Bài ${idx + 1}: ${getCleanFileName(item.fileName)}`;
+            opt.innerText = titleText;
+            selectContainer.appendChild(opt);
+        });
+
+        selectContainer.onchange = function() {
+            if (this.value === "") return;
+            let targetItem = dataList[parseInt(this.value)];
+            removeSubMenuContainer();
+            clickCallback(targetItem);
+        };
+
+        let targetRow = isManual ? inputButtonsRow : markingRow;
+        targetRow.appendChild(selectContainer);
+
+        if (typeof selectContainer.showPicker === 'function') {
+            selectContainer.showPicker();
+        } else {
+            selectContainer.focus();
+        }
+    }
+
+    function removeSubMenuContainer() {
+        let existing = document.getElementById('dynamicHistorySubMenu');
+        if (existing) existing.remove();
+    }
+
+    function reEncodeAndDownload(fileTarget, historyObj, qualityMode) {
+        speak("Đang tiến hành thiết lập mã hóa tải về đúng chất lượng yêu cầu");
+        let bitrateVal = parseInt(qualityMode);
+        let cleanName = getCleanFileName(historyObj.fileName);
+        
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const fileReader = new FileReader();
+
+        fileReader.onload = function(ev) {
+            audioCtx.decodeAudioData(ev.target.result).then(audioBuffer => {
+                const sampleRate = audioBuffer.sampleRate;
+                const startSample = Math.floor(historyObj.timeA * sampleRate);
+                const endSample = Math.floor(historyObj.timeB * sampleRate);
+                const durationSamples = endSample - startSample;
+
+                const cutBuffer = audioCtx.createBuffer(
+                    audioBuffer.numberOfChannels,
+                    durationSamples,
+                    sampleRate
+                );
+
+                for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                    const originalData = audioBuffer.getChannelData(channel);
+                    const cutData = cutBuffer.getChannelData(channel);
+                    const segment = originalData.subarray(startSample, endSample);
+                    cutData.set(segment);
+                }
+                
+                const channels = cutBuffer.numberOfChannels;
+                const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, bitrateVal);
+                const mp3Data = [];
+
+                if (channels === 1) {
+                    const pcmFloat = cutBuffer.getChannelData(0);
+                    const pcmInt16 = new Int16Array(pcmFloat.length);
+                    for (let i = 0; i < pcmFloat.length; i++) {
+                        let s = Math.max(-1, Math.min(1, pcmFloat[i]));
+                        pcmInt16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    }
+                    let sampleBlockSize = 1152;
+                    for (let i = 0; i < pcmInt16.length; i += sampleBlockSize) {
+                        let chunk = pcmInt16.subarray(i, i + sampleBlockSize);
+                        let mp3buf = mp3encoder.encodeBuffer(chunk);
+                        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+                    }
+                } else {
+                    const leftFloat = cutBuffer.getChannelData(0);
+                    const rightFloat = cutBuffer.getChannelData(1);
+                    const leftInt16 = new Int16Array(leftFloat.length);
+                    const rightInt16 = new Int16Array(rightFloat.length);
+                    
+                    for (let i = 0; i < leftFloat.length; i++) {
+                        let sL = Math.max(-1, Math.min(1, leftFloat[i]));
+                        leftInt16[i] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
+                        let sR = Math.max(-1, Math.min(1, leftFloat[i]));
+                        rightInt16[i] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
+                    }
+                    
+                    let sampleBlockSize = 1152;
+                    for (let i = 0; i < leftInt16.length; i += sampleBlockSize) {
+                        let leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
+                        let rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
+                        let mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+                        if (mp3buf.length > 0) mp3Data.push(mp3buf);
+                    }
+                }
+
+                const mp3buf = mp3encoder.flush();
+                if (mp3buf.length > 0) mp3Data.push(mp3buf);
+
+                const mp3Blob = new Blob(mp3Data, { type: 'audio/mp3' });
+                const blobUrl = URL.createObjectURL(mp3Blob);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = blobUrl;
+                downloadLink.setAttribute('download', cleanName + ".mp3");
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                speak("Đã tải tệp hoàn tất");
+            }).catch(() => {
+                speak("Lỗi xử lý giải mã tệp lịch sử.");
+            });
+        };
+        fileReader.readAsArrayBuffer(fileTarget);
     }
 
     function cleanTextForSearch(str) {
@@ -242,9 +656,8 @@
         const btnDirect = document.getElementById('voiceSearchBtnDirect');
         const btnManual = document.getElementById('voiceSearchBtnManual');
 
-        // Bổ sung logic tăng tốc: Nếu đang nghe, người dùng ấn nút lần nữa để tìm kiếm ngay lập tức
         if (isVoiceListening && globalRecognition) {
-            globalRecognition.stop(); // Dừng ghi âm ngay lập tức để kích hoạt sự kiện onresult
+            globalRecognition.stop(); 
             return;
         }
 
@@ -268,7 +681,7 @@
             btnManual.innerText = "Tìm ngay";
         };
 
-        recognition.onerror = (event) => {
+        recognition.onerror = () => {
             isVoiceListening = false;
             btnDirect.classList.remove('listening');
             btnManual.classList.remove('listening');
@@ -289,17 +702,13 @@
             const voiceResult = event.results[0][0].transcript;
             const lowerResult = voiceResult.toLowerCase();
 
-            // Xử lý lệnh kiểm tra thông tin nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("thông tin") || lowerResult.includes("check") || lowerResult.includes("kiểm tra")) {
                 readSongInfo();
                 return;
             }
 
-            // Xử lý lệnh điều khiển tua nâng cao (Phản hồi lập tức)
             if (lowerResult.includes("tua") || lowerResult.includes("qua") || lowerResult.includes("lai")) {
                 let amount = 0;
-                
-                // Chuẩn hóa một số chữ số phổ biến dạng nói sang chữ số để xử lý chính xác
                 let chuẩnHóaResult = lowerResult
                     .replace(/mười lăm/g, "15")
                     .replace(/ba mươi/g, "30")
@@ -326,7 +735,6 @@
                         speakTuaInfo("Tua tới", activePlayer.currentTime);
                     }
                 } else {
-                    // Cứu cánh thông minh: Nếu nói "tua đi/tua lại" không kèm số, lấy giá trị của chế độ tua hiện tại
                     amount = skipModes[currentModeIndex].value;
                     if (chuẩnHóaResult.includes("lùi") || chuẩnHóaResult.includes("sau") || chuẩnHóaResult.includes("ngược") || chuẩnHóaResult.includes("lại")) {
                         activePlayer.currentTime = Math.max(0, activePlayer.currentTime - amount);
@@ -339,7 +747,6 @@
                 return;
             }
 
-            // Trả về logic tìm kiếm theo tên tệp nếu không trùng lệnh chức năng
             const cleanVoiceQuery = cleanTextForSearch(voiceResult);
             if (!cleanVoiceQuery) {
                 speak("Không nghe rõ từ khóa, vui lòng thử lại.");
@@ -357,19 +764,10 @@
 
             if (foundIndex !== -1) {
                 fadeOut(() => {
-                    if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-                    resetAllLoopButtons(false);
-                    activePlayer.pause();
-                    activePlayer.src = "";
-                    videoPlayer.src = "";
-                    timeA = null; timeB = null;
-                    document.getElementById('replayBtnDirect').style.display = "none";
-                    document.getElementById('replayBtnManual').style.display = "none";
                     resetToDefaultSpeedView();
-
                     currentFileIndex = foundIndex;
                     playCurrentPlaylistItem();
-                    document.activeElement.blur(); 
+                    if (document.activeElement) document.activeElement.blur(); 
                 });
             } else {
                 speak("Xin lỗi. Không tìm thấy tệp bạn đã yêu cầu, vui lòng thử lại.");
@@ -415,6 +813,29 @@
         }, 20);
     }
 
+    // Quản lý và chặn thao tác đơn nếu có lệnh nhấn đúp (Kể cả màn hình khóa)
+    function handlePlayToggleClick() {
+        const currentTime = Date.now();
+        const timeDiff = currentTime - lastPlayClickTime;
+
+        if (timeDiff <= 500) {
+            // Nhấn đúp thành công trong khoảng 500ms -> Kích hoạt microphone
+            if (playClickTimeout) {
+                clearTimeout(playClickTimeout);
+                playClickTimeout = null;
+            }
+            lastPlayClickTime = 0; // Reset mốc thời gian
+            startVoiceSearch();
+        } else {
+            // Nhấn lần đầu -> Thiết lập bộ đếm chờ xem có nhấn lần 2 không
+            lastPlayClickTime = currentTime;
+            playClickTimeout = setTimeout(() => {
+                togglePlay(); // Hết 500ms chỉ nhấn 1 lần -> Chạy lệnh phát/tạm dừng thông thường
+                playClickTimeout = null;
+            }, 500);
+        }
+    }
+
     function updateMediaSession() {
         if ('mediaSession' in navigator) {
             navigator.mediaSession.metadata = new MediaMetadata({
@@ -423,8 +844,9 @@
                 album: 'Danh sách phát của tôi'
             });
 
-            navigator.mediaSession.setActionHandler('play', () => { togglePlay(); });
-            navigator.mediaSession.setActionHandler('pause', () => { togglePlay(); });
+            // Gắn chung hàm handlePlayToggleClick xử lý nhấn đúp lên hệ thống thanh thông báo và màn hình khóa
+            navigator.mediaSession.setActionHandler('play', () => { handlePlayToggleClick(); });
+            navigator.mediaSession.setActionHandler('pause', () => { handlePlayToggleClick(); });
             navigator.mediaSession.setActionHandler('previoustrack', () => { playPreviousTrack(); });
             navigator.mediaSession.setActionHandler('nexttrack', () => { playNextTrack(); });
         }
@@ -503,16 +925,7 @@
         }
 
         fadeOut(() => {
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false);
-            activePlayer.pause();
-            activePlayer.src = "";
-            videoPlayer.src = "";
-            timeA = null; timeB = null;
-            document.getElementById('replayBtnDirect').style.display = "none";
-            document.getElementById('replayBtnManual').style.display = "none";
             resetToDefaultSpeedView();
-
             currentFileIndex = targetIndex;
             playCurrentPlaylistItem();
             playlistBtnDirect.focus();
@@ -521,7 +934,6 @@
 
     function toggleRepeatMode() {
         repeatMode = (repeatMode + 1) % 3;
-        
         if (repeatMode === 0) {
             repeatBtn.innerText = "Lặp lại tắt";
             repeatBtn.classList.remove('active-repeat');
@@ -669,13 +1081,11 @@
         playCurrentPlaylistItem();
         
         updateVoiceSearchVisibility();
+        cleanExpiredHistory();
 
         document.getElementById('main-selector-row').style.display = "flex";
         controls.style.display = "block";
     }
-
-    let oldestFileClickTimeout = null;
-    let lastOldestFileClickTime = 0;
 
     function handleOldestFileClick() {
         const currentTime = Date.now();
@@ -699,19 +1109,8 @@
 
     function playOldestFileFirst() {
         if (filePlaylist.length <= 1) return;
-
         fadeOut(() => {
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false); 
-            activePlayer.pause();
-            activePlayer.src = "";
-            videoPlayer.src = "";
-
-            timeA = null; timeB = null;
-            document.getElementById('replayBtnDirect').style.display = "none";
-            document.getElementById('replayBtnManual').style.display = "none";
             resetToDefaultSpeedView();
-
             currentFileIndex = filePlaylist.length - 1;
             playCurrentPlaylistItem();
         });
@@ -719,19 +1118,8 @@
 
     function playNewestFile() {
         if (filePlaylist.length <= 1) return;
-
         fadeOut(() => {
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false); 
-            activePlayer.pause();
-            activePlayer.src = "";
-            videoPlayer.src = "";
-
-            timeA = null; timeB = null;
-            document.getElementById('replayBtnDirect').style.display = "none";
-            document.getElementById('replayBtnManual').style.display = "none";
             resetToDefaultSpeedView();
-
             currentFileIndex = 0;
             playCurrentPlaylistItem();
         });
@@ -750,16 +1138,7 @@
         }
 
         fadeOut(() => {
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false);
-            activePlayer.pause();
-            activePlayer.src = "";
-            videoPlayer.src = "";
-            timeA = null; timeB = null;
-            document.getElementById('replayBtnDirect').style.display = "none";
-            document.getElementById('replayBtnManual').style.display = "none";
             resetToDefaultSpeedView();
-
             currentFileIndex--;
             playCurrentPlaylistItem();
         });
@@ -767,31 +1146,19 @@
 
     function playNextTrack() {
         if (filePlaylist.length <= 1) return;
-
         fadeOut(() => {
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false);
-            activePlayer.pause();
-            activePlayer.src = "";
-            videoPlayer.src = "";
-            timeA = null; timeB = null;
-            document.getElementById('replayBtnDirect').style.display = "none";
-            document.getElementById('replayBtnManual').style.display = "none";
             resetToDefaultSpeedView();
-
             if (currentFileIndex === filePlaylist.length - 1) {
                 currentFileIndex = 0;
             } else {
                 currentFileIndex++;
             }
-
             playCurrentPlaylistItem();
         });
     }
 
     function configureSkipModes(type) {
         const savedIndex = currentModeIndex;
-
         if (type === 'audio') {
             skipModes = [...audioSkipModes];
         } else {
@@ -801,7 +1168,6 @@
             }
             skipModes = videoModes;
         }
-
         currentModeIndex = savedIndex < skipModes.length ? savedIndex : 0;
         updateSkipButtonsUI();
     }
@@ -812,10 +1178,7 @@
             if (rawCleanName.toLowerCase().includes(sep)) {
                 let parts = rawCleanName.split(new RegExp(sep, "i"));
                 if (parts.length >= 2) {
-                    return {
-                        song: parts[0].trim(),
-                        artist: parts[1].trim()
-                    };
+                    return { song: parts[0].trim(), artist: parts[1].trim() };
                 }
             }
         }
@@ -828,7 +1191,6 @@
 
         originalFullFileName = file.name;
         let rawCleanName = getCleanFileName(file.name);
-
         let parsedData = parseArtistFromFilename(rawCleanName);
         currentSongName = parsedData.song;
         currentArtistName = parsedData.artist;
@@ -837,7 +1199,6 @@
 
         if (currentFileType === 'audio') {
             activePlayer = new Audio(URL.createObjectURL(file));
-            
             if (window.jsmediatags) {
                 window.jsmediatags.read(file, {
                     onSuccess: function(tag) {
@@ -847,7 +1208,7 @@
                             updateMediaSession();
                         }
                     },
-                    onError: function(error) {
+                    onError: function() {
                         console.log("Không đọc được ID3 Tag ẩn, chuyển sang dự phòng tên file.");
                     }
                 });
@@ -911,7 +1272,6 @@
 
     function speak(text) {
         if (isSpeechMuted) return;
-
         window.speechSynthesis.cancel(); 
         let utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'vi-VN';
@@ -922,15 +1282,12 @@
 
     function handleSmartInput(inputElement) {
         let valueStr = inputElement.value;
-        
         if (currentFileType === 'audio') {
             valueStr = valueStr.replace(/[^0-9]/g, '');
         } else {
             valueStr = valueStr.replace(/[^0-9.:]/g, '');
         }
-        
         inputElement.value = valueStr;
-        
         if (valueStr === "") return;
         let textToSpeak = valueStr.replace('.', ' chấm ').replace(':', ' giờ ');
         speak(textToSpeak);
@@ -940,7 +1297,6 @@
         let valueStr = inputElement.value;
         valueStr = valueStr.replace(/[^0-9.]/g, '');
         inputElement.value = valueStr;
-        
         if (valueStr === "") return;
         
         let textToSpeak = valueStr.replace('.', ' chấm ');
@@ -953,7 +1309,6 @@
 
     function formatTargetTimeText(seconds) {
         if (seconds <= 0) return "0 giây";
-        
         let hours = Math.floor(seconds / 3600);
         let remainder = seconds % 3600;
         let mins = Math.floor(remainder / 60);
@@ -969,7 +1324,6 @@
 
     function speakTuaInfo(actionType, currentSecs) {
         let currentText = formatTargetTimeText(currentSecs);
-        
         if (!activePlayer.duration) {
             speak(currentText);
             return;
@@ -992,7 +1346,6 @@
         } else {
             remainingText = `${Math.round(remaining)} giây`;
         }
-        
         speak(`${currentText}, ${remainingText}`);
     }
 
@@ -1032,7 +1385,6 @@
 
     function toggleView() {
         isManual = !isManual;
-        
         markingRow.style.display = isManual ? "none" : "flex";
         inputButtonsRow.style.display = isManual ? "flex" : "none";
         
@@ -1041,7 +1393,6 @@
         
         document.getElementById('qualitySelectDirect').value = "";
         document.getElementById('qualitySelectManual').value = "";
-        
         document.getElementById('qualitySelectDirect').style.display = "none";
         document.getElementById('qualitySelectManual').style.display = "none";
 
@@ -1050,6 +1401,11 @@
         document.getElementById('speedSelectDirect').style.display = "none";
         document.getElementById('speedSelectManual').style.display = "none";
         
+        document.getElementById('historySelectDirect').value = "";
+        document.getElementById('historySelectManual').value = "";
+        document.getElementById('historySelectDirect').style.display = "none";
+        document.getElementById('historySelectManual').style.display = "none";
+
         document.getElementById('playlistSelectDirect').value = "";
         document.getElementById('playlistSelectDirect').style.display = "none";
         
@@ -1058,6 +1414,8 @@
         } else {
             playlistBtnDirect.style.display = "none";
         }
+
+        removeSubMenuContainer();
 
         checkRange();
         speak(isManual ? "Chuyển sang chế độ nhập thủ công" : "Chuyển sang chế độ đánh dấu trực tiếp");
@@ -1112,7 +1470,6 @@
         }
 
         let targetTime = type === 'start' ? timeA : timeB;
-
         if (targetTime !== null) {
             let vals = formatTimeValueToInputs(targetTime, isLongFile);
             inputMain.value = vals.mainVal;
@@ -1123,7 +1480,6 @@
         }
 
         groupElement.style.display = "block";
-        
         if (currentFileType === 'video') {
             speak("Mở ô nhập thời gian. Bạn có thể nhập giờ chấm phút hoặc chỉ nhập số phút");
         } else {
@@ -1152,23 +1508,17 @@
 
     function parseSmartInputValue(inputStr, isLongFile) {
         if (!inputStr) return 0;
-        
         if (currentFileType === 'video') {
             if (inputStr.includes('.')) {
                 let parts = inputStr.split('.');
                 let hours = parseFloat(parts[0]);
                 let minStr = parts[1] || "";
-                
-                if (minStr.length === 1) {
-                    minStr = "0" + minStr;
-                }
+                if (minStr.length === 1) minStr = "0" + minStr;
                 let mins = parseFloat(minStr);
-                
                 if (isNaN(hours)) hours = 0;
                 if (isNaN(mins)) mins = 0;
                 return (hours * 3600) + (mins * 60);
             }
-            
             let mins = parseFloat(inputStr);
             return isNaN(mins) ? 0 : mins * 60;
         }
@@ -1187,10 +1537,7 @@
         let parts = inputStr.split(separator);
         let hours = parseFloat(parts[0]);
         let minStr = parts[1] || "";
-        
-        if (minStr.length === 1) {
-            minStr = "0" + minStr;
-        }
+        if (minStr.length === 1) minStr = "0" + minStr;
         let mins = parseFloat(minStr);
 
         if (isNaN(hours)) hours = 0;
@@ -1211,10 +1558,9 @@
         let baseSeconds = parseSmartInputValue(mainStr, isLongFile);
         let s = secStr !== "" ? parseFloat(secStr) : 0;
         if (isNaN(s)) s = 0;
-        
         let finalCalculatedTime = baseSeconds + s;
 
-        document.activeElement.blur(); 
+        if (document.activeElement) document.activeElement.blur(); 
         startInputGroup.style.display = "none";
         endInputGroup.style.display = "none";
 
@@ -1265,16 +1611,16 @@
                 speedSelectDirect.style.display = "none";
                 speedSelectManual.style.display = "none";
 
-                if (qDirect.value === "" && qManual.value === "") {
-                    btnDirect.style.display = "inline-block";
-                    btnManual.style.display = "inline-block";
+                if (isHistoryTimeLoopActive) {
+                    btnDirect.style.display = "none";
+                    btnManual.style.display = "none";
                     qDirect.style.display = "none";
                     qManual.style.display = "none";
                 } else {
-                    btnDirect.style.display = "none";
-                    btnManual.style.display = "none";
-                    qDirect.style.display = "inline-block";
-                    qManual.style.display = "inline-block";
+                    if (qDirect.style.display !== "inline-block" && qManual.style.display !== "inline-block") {
+                        btnDirect.style.display = "inline-block";
+                        btnManual.style.display = "inline-block";
+                    }
                 }
                 return; 
             }
@@ -1295,11 +1641,14 @@
     }
 
     function resetToDefaultSpeedView() {
-        if (loopInterval) { 
-            clearInterval(loopInterval); 
-            loopInterval = null; 
-        }
+        if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
         resetAllLoopButtons(false);
+
+        if (cutCountdownInterval) { clearInterval(cutCountdownInterval); cutCountdownInterval = null; }
+        isCountingDown = false;
+        isHistoryTimeLoopActive = false; 
+
+        removeSubMenuContainer();
 
         document.getElementById('fastCutBtnDirect').style.display = "none";
         document.getElementById('fastCutBtnManual').style.display = "none";
@@ -1314,10 +1663,20 @@
         document.getElementById('speedSelectDirect').style.display = "none";
         document.getElementById('speedSelectManual').style.display = "none";
         
+        document.getElementById('historySelectDirect').value = "";
+        document.getElementById('historySelectManual').value = "";
+        document.getElementById('historySelectDirect').style.display = "none";
+        document.getElementById('historySelectManual').style.display = "none";
+        
+        let textCut = (currentFileType === 'audio') ? "Cắt nhạc chuông" : "Cắt video";
+        document.getElementById('fastCutBtnDirect').innerText = textCut;
+        document.getElementById('fastCutBtnManual').innerText = textCut;
+
         timeA = null;
         timeB = null;
         
         updateVoiceSearchVisibility();
+        cleanExpiredHistory();
         checkRange();
     }
 
@@ -1334,6 +1693,7 @@
     function setA() { 
         timeA = activePlayer.currentTime; 
         activePlayer.currentTime = timeA; 
+        isHistoryTimeLoopActive = false; 
         checkRange(); 
         speak("Đã đánh dấu điểm đầu trực tiếp"); 
     }
@@ -1341,6 +1701,7 @@
     function setB() { 
         timeB = activePlayer.currentTime; 
         activePlayer.currentTime = timeB; 
+        isHistoryTimeLoopActive = false; 
         checkRange(); 
         speak("Đã đánh dấu điểm cuối trực tiếp"); 
         
@@ -1420,13 +1781,62 @@
         }
     }
 
+    function handleFastCutButtonClick() {
+        let savedDefaultQuality = localStorage.getItem('defaultQuality');
+
+        if (isCountingDown) {
+            if (cutCountdownInterval) clearInterval(cutCountdownInterval);
+            isCountingDown = false;
+            localStorage.removeItem('defaultQuality');
+            
+            let originalText = (currentFileType === 'audio') ? "Cắt nhạc chuông" : "Cắt video";
+            document.getElementById('fastCutBtnDirect').innerText = originalText;
+            document.getElementById('fastCutBtnManual').innerText = originalText;
+            
+            speak("Đã hủy cấu hình mặc định. Vui lòng chọn lại chất lượng âm thanh mong muốn.");
+            showQualityMenu();
+            return;
+        }
+
+        if (savedDefaultQuality) {
+            isCountingDown = true;
+            let counter = 5;
+            speak("Đếm ngược 5 giây để bắt đầu cắt, nhấn lần nữa nếu bạn muốn chọn lại chất lượng");
+            
+            const updateBtnText = (val) => {
+                document.getElementById('fastCutBtnDirect').innerText = `Hủy cài đặt mặc định (${val})`;
+                document.getElementById('fastCutBtnManual').innerText = `Hủy cài đặt mặc định (${val})`;
+            };
+            
+            updateBtnText(counter);
+            
+            cutCountdownInterval = setInterval(() => {
+                counter--;
+                if (counter > 0) {
+                    updateBtnText(counter);
+                    speak(counter.toString());
+                } else {
+                    clearInterval(cutCountdownInterval);
+                    isCountingDown = false;
+                    
+                    let originalText = (currentFileType === 'audio') ? "Cắt nhạc chuông" : "Cắt video";
+                    document.getElementById('fastCutBtnDirect').innerText = originalText;
+                    document.getElementById('fastCutBtnManual').innerText = originalText;
+                    
+                    processFastCutAudio(savedDefaultQuality);
+                }
+            }, 1000);
+        } else {
+            showQualityMenu();
+        }
+    }
+
     function showQualityMenu() {
         document.getElementById('fastCutBtnDirect').style.display = "none";
         document.getElementById('fastCutBtnManual').style.display = "none";
 
         const qDirect = document.getElementById('qualitySelectDirect');
         const qManual = document.getElementById('qualitySelectManual');
-
         qDirect.style.display = "inline-block";
         qManual.style.display = "inline-block";
         
@@ -1450,7 +1860,6 @@
     function executeEncoding(audioBuffer, bitrateVal, finalFileName) {
         const sampleRate = audioBuffer.sampleRate;
         const channels = audioBuffer.numberOfChannels;
-        
         const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, bitrateVal);
         const mp3Data = [];
 
@@ -1470,14 +1879,12 @@
         } else {
             const leftFloat = audioBuffer.getChannelData(0);
             const rightFloat = audioBuffer.getChannelData(1);
-            
             const leftInt16 = new Int16Array(leftFloat.length);
             const rightInt16 = new Int16Array(rightFloat.length);
             
             for (let i = 0; i < leftFloat.length; i++) {
                 let sL = Math.max(-1, Math.min(1, leftFloat[i]));
                 leftInt16[i] = sL < 0 ? sL * 0x8000 : sL * 0x7FFF;
-                
                 let sR = Math.max(-1, Math.min(1, leftFloat[i]));
                 rightInt16[i] = sR < 0 ? sR * 0x8000 : sR * 0x7FFF;
             }
@@ -1495,25 +1902,23 @@
         if (mp3buf.length > 0) mp3Data.push(mp3buf);
 
         const mp3Blob = new Blob(mp3Data, { type: 'audio/mp3' });
-        const blobUrl = URL.createObjectURL(mp3Blob);
+        
+        saveToCutHistory(originalFullFileName, currentFileType, timeA, timeB, mp3Blob);
 
+        const blobUrl = URL.createObjectURL(mp3Blob);
         const autoDownloadLink = document.createElement('a');
         autoDownloadLink.href = blobUrl;
-        autoDownloadLink.setAttribute('download', finalFileName);
+        autoDownloadLink.setAttribute('download', finalFileName); 
         document.body.appendChild(autoDownloadLink);
         autoDownloadLink.click();
         document.body.removeChild(autoDownloadLink);
 
         speak("Đã tải tệp hoàn tất");
-
-        setTimeout(() => {
-            resetToDefaultSpeedView();
-        }, 500);
+        setTimeout(() => { resetToDefaultSpeedView(); }, 500);
     }
 
     function processFastCutAudio(mode) {
         if (!mode) return;
-
         const currentFile = filePlaylist[currentFileIndex];
         if (!currentFile) {
             speak("Không tìm thấy tệp dữ liệu hiện tại");
@@ -1527,11 +1932,27 @@
         document.getElementById('qualitySelectDirect').style.display = "none";
         document.getElementById('qualitySelectManual').style.display = "none";
 
-        let bitrateVal = parseInt(mode); 
-        let cleanName = getCleanFileName(originalFullFileName);
+        localStorage.setItem('defaultQuality', mode);
+        saveFileToDb(currentFile, currentFile.name);
+
+        let bitrateVal = parseInt(mode);
+        let rawCleanName = getCleanFileName(currentFile.name);
         
+        let formatSpace = rawCleanName;
+        let hasDot = formatSpace.includes('.');
+        if (hasDot) {
+            let lastDotIdx = formatSpace.lastIndexOf('.');
+            let nPart = formatSpace.substring(0, lastDotIdx).replace(/-/g, '').replace(/\s+/g, ' ').trim();
+            let ePart = formatSpace.substring(lastDotIdx);
+            formatSpace = nPart + " " + ePart;
+        } else {
+            formatSpace = formatSpace.replace(/-/g, '').replace(/\s+/g, ' ').trim() + " ";
+        }
+        
+        let finalFileName = "Nhạc_chuông_" + formatSpace + ".mp3";
+        speak("Đang thực hiện tiến trình cắt và xử lý dữ liệu âm thanh");
+
         if (currentFileType === 'audio') {
-            speak(`Đang cắt nhạc chuông`);
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const fileReader = new FileReader();
 
@@ -1555,62 +1976,42 @@
                         cutData.set(segment);
                     }
 
-                    executeEncoding(cutBuffer, bitrateVal, cleanName + ".mp3");
-                }).catch(err => {
-                    speak("Quá trình giải mã cấu trúc bài hát thất bại.");
-                    resetToDefaultSpeedView();
+                    executeEncoding(cutBuffer, bitrateVal, finalFileName);
+                }).catch(() => {
+                    speak("Cấu trúc tệp âm thanh bị lỗi hoặc không được hỗ trợ giải mã.");
                 });
             };
             fileReader.readAsArrayBuffer(currentFile);
         } else {
-            speak(`Đang xử lý trích xuất âm thanh từ video. Vui lòng đợi trong giây lát.`);
-            
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const source = audioCtx.createMediaElementSource(videoPlayer);
+            const fileReader = new FileReader();
             
-            const durationToRecord = timeB - timeA;
-            const sampleRate = audioCtx.sampleRate;
-            
-            const bufferSize = 4096;
-            const processor = audioCtx.createScriptProcessor(bufferSize, 2, 2);
-            
-            const totalSamples = Math.floor(durationToRecord * sampleRate);
-            const recordedBuffer = audioCtx.createBuffer(2, totalSamples, sampleRate);
-            let recordedSamplesCount = 0;
-            
-            source.connect(processor);
-            processor.connect(audioCtx.destination);
-            source.connect(audioCtx.destination); 
-            
-            if (loopInterval) { clearInterval(loopInterval); loopInterval = null; }
-            resetAllLoopButtons(false);
-            
-            videoPlayer.currentTime = timeA;
-            videoPlayer.play();
-            
-            processor.onaudioprocess = function(e) {
-                const leftIn = e.inputBuffer.getChannelData(0);
-                const rightIn = e.inputBuffer.getChannelData(1);
-                
-                const leftOut = recordedBuffer.getChannelData(0);
-                const rightOut = recordedBuffer.getChannelData(1);
-                
-                for (let sample = 0; sample < leftIn.length; sample++) {
-                    if (recordedSamplesCount < totalSamples) {
-                        leftOut[recordedSamplesCount] = leftIn[sample];
-                        rightOut[recordedSamplesCount] = rightIn[sample];
-                        recordedSamplesCount++;
+            fileReader.onload = function(ev) {
+                audioCtx.decodeAudioData(ev.target.result).then(audioBuffer => {
+                    const sampleRate = audioBuffer.sampleRate;
+                    const startSample = Math.floor(timeA * sampleRate);
+                    const endSample = Math.floor(timeB * sampleRate);
+                    const durationSamples = endSample - startSample;
+
+                    const cutBuffer = audioCtx.createBuffer(
+                        audioBuffer.numberOfChannels,
+                        durationSamples,
+                        sampleRate
+                    );
+
+                    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+                        const originalData = audioBuffer.getChannelData(channel);
+                        const cutData = cutBuffer.getChannelData(channel);
+                        const segment = originalData.subarray(startSample, endSample);
+                        cutData.set(segment);
                     }
-                }
-                
-                if (recordedSamplesCount >= totalSamples) {
-                    source.disconnect(processor);
-                    processor.disconnect();
-                    
-                    speak("Trích xuất thành công, đang tiến hành đóng gói MP3");
-                    executeEncoding(recordedBuffer, bitrateVal, "video_audio.mp3");
-                }
+
+                    executeEncoding(cutBuffer, bitrateVal, finalFileName);
+                }).catch(() => {
+                    speak("Giải mã âm thanh từ luồng video thất bại.");
+                });
             };
+            fileReader.readAsArrayBuffer(currentFile);
         }
     }
 </script>
